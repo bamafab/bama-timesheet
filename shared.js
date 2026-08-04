@@ -13187,21 +13187,71 @@ function updateBomDnButton() { /* no-op — see comment */ }
 let _pendingDn = null;
 //   { items:[allEligibleBomItems], supplierId, supplierName, supplierServiceIds:Set }
 
+// ── Multi-job DN / SDN helpers ───────────────────────────────────────────────
+// One delivery note can carry several jobs from the SAME project (mirrors the
+// RAMS merge). Items are tagged _jobId/_jobName so the modal groups them and
+// the printed PDF banners them per job — it must be obvious what belongs where.
+let _gdnJobIds = [];   // supplier-DN selected jobs
+let _sdnJobIds = [];   // site-DN selected jobs
+
+// BOM items for a job WITHOUT touching _bomSelected (loadJobBomItems clears
+// the grid selection — fine on the BOM tab, wrong mid-modal for other jobs).
+async function _dnFetchJobItems(jobId) {
+  const id = parseInt(jobId);
+  if (!id) return [];
+  if (_bomItemsByJob[id]) return _bomItemsByJob[id];
+  try {
+    const rows = await api.get(`/api/job-bom-items?job_id=${encodeURIComponent(id)}`);
+    _bomItemsByJob[id] = Array.isArray(rows) ? rows : [];
+  } catch (e) { _bomItemsByJob[id] = []; }
+  return _bomItemsByJob[id];
+}
+
+function _dnProjectJobs() {
+  return (drawingsData.projects?.[currentProject?.id]?.jobs) || [];
+}
+function _dnJobName(jobId) {
+  const j = _dnProjectJobs().find(x => parseInt(x.id) === parseInt(jobId));
+  return j ? (j.name || ('Job ' + jobId)) : ('Job ' + jobId);
+}
+
+// Generic jobs-covered checkbox list for the DN/SDN modals.
+function _dnRenderJobsPicker(elId, selIds, tickFn) {
+  const wrap = document.getElementById(elId);
+  if (!wrap) return;
+  const jobs = _dnProjectJobs();
+  if (jobs.length <= 1) { wrap.parentElement && (wrap.parentElement.style.display = 'none'); return; }
+  if (wrap.parentElement) wrap.parentElement.style.display = '';
+  wrap.innerHTML = jobs.map(j => {
+    const jid = parseInt(j.id);
+    const on = selIds.includes(jid);
+    return `<label style="display:flex;align-items:center;gap:8px;padding:6px 8px;border-bottom:1px solid var(--border);cursor:pointer">
+      <input type="checkbox" ${on ? 'checked' : ''} value="${jid}"
+             onchange="${tickFn}(${jid}, this.checked)" style="width:14px;height:14px;accent-color:var(--accent)">
+      <span style="font-size:12px;color:var(--text)">${escapeHtml(j.name || ('Job ' + jid))}</span>
+    </label>`;
+  }).join('');
+}
+
+const _dnJobChip = name => `<span style="font-size:10px;color:#a78bfa;background:rgba(139,92,246,.12);border:1px solid rgba(139,92,246,.3);border-radius:4px;padding:1px 6px;white-space:nowrap">${escapeHtml(name)}</span>`;
+
 async function openGenerateDnModalSQL() {
   const jobId = currentJob?.id ? parseInt(currentJob.id) : null;
   if (!jobId) { toast('No job selected.', 'error'); return; }
 
+  _gdnJobIds = [jobId];
+
   // Eligible items = anything not yet despatched (i.e. status pending
   // OR ready_for_despatch OR at_supplier). We include at_supplier too
   // so the user can re-print a DN if needed, but they're shown read-only
-  // and ticking is disabled.
-  const items = (_bomItemsByJob[jobId] || []).filter(i => i.status !== 'despatched');
+  // and ticking is disabled. Union across every ticked job, tagged per job.
+  const items = await _gdnEligibleItems();
   if (items.length === 0) {
     toast('Nothing to send. All BOM items are already despatched.', 'error');
     return;
   }
 
-  _pendingDn = { items, supplierId: null, supplierName: '', supplierServiceIds: new Set() };
+  _pendingDn = { items, supplierId: null, supplierName: '', supplierServiceIds: new Set(), suppliers: [] };
 
   // Fetch suppliers. Show only suppliers active and offering at least
   // one finish that appears in the eligible items list. That way the
@@ -13210,6 +13260,47 @@ async function openGenerateDnModalSQL() {
   let suppliers = [];
   try { suppliers = (await api.get('/api/suppliers')) || []; }
   catch (e) { toast('Could not load suppliers: ' + e.message, 'error'); _pendingDn = null; return; }
+  _pendingDn.suppliers = suppliers;
+
+  _dnRenderJobsPicker('gdnJobsList', _gdnJobIds, 'gdnJobTick');
+
+  _gdnRenderSuppliers();
+
+  document.getElementById('generateDnModal').classList.add('active');
+}
+
+// Eligible items across every ticked job, each tagged _jobId/_jobName.
+async function _gdnEligibleItems() {
+  const out = [];
+  for (const jid of _gdnJobIds) {
+    const rows = await _dnFetchJobItems(jid);
+    const nm = _dnJobName(jid);
+    rows.filter(i => i.status !== 'despatched')
+        .forEach(i => out.push({ ...i, _jobId: jid, _jobName: nm }));
+  }
+  return out;
+}
+
+// Job tick on the DN modal — rebuild the eligible union and the supplier list
+// (finish relevance follows the items), keeping the picked supplier if it's
+// still on the list.
+async function gdnJobTick(jobId, on) {
+  jobId = parseInt(jobId);
+  if (on) { if (!_gdnJobIds.includes(jobId)) _gdnJobIds.push(jobId); }
+  else _gdnJobIds = _gdnJobIds.filter(x => x !== jobId);
+  if (!_gdnJobIds.length) { _gdnJobIds = [jobId]; }   // never zero jobs
+  _dnRenderJobsPicker('gdnJobsList', _gdnJobIds, 'gdnJobTick');
+  if (!_pendingDn) return;
+  _pendingDn.items = await _gdnEligibleItems();
+  _gdnRenderSuppliers();
+}
+
+// Supplier list + counters from the current _pendingDn.items. Re-selects the
+// previously picked supplier when it survives the re-filter.
+function _gdnRenderSuppliers() {
+  if (!_pendingDn) return;
+  const items = _pendingDn.items;
+  const suppliers = _pendingDn.suppliers || [];
 
   const relevantFinishIds = new Set(items.map(i => i.finish_service_id).filter(Boolean));
   // If the user has *only* no-finish ready_for_despatch items, we should
@@ -13228,11 +13319,13 @@ async function openGenerateDnModalSQL() {
   document.getElementById('gdnFinishName').textContent =
     relevantFinishIds.size === 0 ? 'mixed / no finish' : 'various';
 
+  const prevSupplier = _pendingDn.supplierId;
+
   // Step 1 UI: supplier picker. Items list rendered after pick.
   const sList = document.getElementById('gdnSupplierList');
   if (!filteredSuppliers.length) {
     sList.innerHTML = `<div style="padding:16px;color:var(--subtle);font-size:13px;text-align:center">
-      No active suppliers match the finishes on this job. Add one in Manager &rarr; Suppliers.
+      No active suppliers match the finishes on the selected jobs. Add one in Manager &rarr; Suppliers.
     </div>`;
   } else {
     sList.innerHTML = filteredSuppliers.map(s => {
@@ -13282,7 +13375,12 @@ async function openGenerateDnModalSQL() {
     });
   });
 
-  document.getElementById('generateDnModal').classList.add('active');
+  // Re-pick the previous supplier if it's still available.
+  if (prevSupplier) {
+    const keep = sList.querySelector(`input[name="gdnSupplier"][value="${prevSupplier}"]`);
+    if (keep) { keep.checked = true; keep.dispatchEvent(new Event('change')); }
+    else { _pendingDn.supplierId = null; _pendingDn.supplierName = ''; _pendingDn.supplierServiceIds = new Set(); }
+  }
 }
 
 function renderGdnItemList() {
@@ -13299,8 +13397,15 @@ function renderGdnItemList() {
     <span style="margin-left:auto;font-size:11px;color:var(--subtle)" id="gdnSelCount">0 selected</span>
   </div>`;
 
+  const multiJob = new Set(items.map(i => i._jobId)).size > 1;
   html += '<div style="border:1px solid var(--border);border-radius:8px;overflow:hidden;max-height:280px;overflow-y:auto">';
-  items.forEach((it, idx) => {
+  let _lastJob = null;
+  const sorted = multiJob ? items.slice().sort((a, b) => String(a._jobName || '').localeCompare(String(b._jobName || ''))) : items;
+  sorted.forEach((it, idx) => {
+    if (multiJob && it._jobName !== _lastJob) {
+      _lastJob = it._jobName;
+      html += `<div style="padding:6px 12px;font-size:10px;color:#a78bfa;text-transform:uppercase;letter-spacing:.05em;background:rgba(139,92,246,.08);border-bottom:1px solid var(--border);font-weight:700">${escapeHtml(it._jobName || '')}</div>`;
+    }
     const matches = it.finish_service_id && supSvc.has(it.finish_service_id);
     const readonly = it.status === 'at_supplier';
     const checked = matches && !readonly; // default-tick matching items
@@ -13403,12 +13508,14 @@ async function confirmGenerateDnSQL() {
 
     // 2. Build the DN PDF
     await loadLogoDataUri();
+    const dnJobNames = [...new Set(allSelected.map(i => i._jobName).filter(Boolean))];
     const dn = {
       number:          dnRef,
       createdAt:       new Date().toISOString(),
       destinationName: _pendingDn.supplierName,
       deliverTo:       { name: _pendingDn.supplierName, lines: _pendingDn.deliverToLines || [], contact: '' },
       items:           allSelected,
+      jobNames:        dnJobNames,
       finishName:      [...new Set(allSelected.map(i => i.finish_name).filter(Boolean))].join(', ') || ''
     };
     // 3. Render PDF blob natively with jsPDF (no html2canvas — the page's CSS
@@ -13420,8 +13527,13 @@ async function confirmGenerateDnSQL() {
     if (!projectFolder) throw new Error('Project folder not found on SharePoint');
     const driveId = projectFolder.parentReference?.driveId || BAMA_DRIVE_ID;
     const deliveriesFolder = await getOrCreateSubfolder(projectFolder.id, '07 - Deliveries', driveId);
-    const jobFolderName = (job && (job.folderName || job.name)) || 'Unassigned';
-    const jobSubFolder  = await getOrCreateSubfolder(deliveriesFolder.id, jobFolderName, driveId);
+    // Multi-job DN files at the 07 - Deliveries root (refs are unique) so it
+    // isn't hidden under one arbitrary job's folder; single-job keeps the job
+    // folder as before.
+    const dnJobIdsUsed = [...new Set(allSelected.map(i => i._jobId).filter(Boolean))];
+    const jobSubFolder = (dnJobIdsUsed.length > 1)
+      ? deliveriesFolder
+      : await getOrCreateSubfolder(deliveriesFolder.id, (job && (job.folderName || job.name)) || 'Unassigned', driveId);
     const dnFileName = `${dnRef}.pdf`;
     const token = await getToken();
     const upUrl = `https://graph.microsoft.com/v1.0/drives/${driveId}/items/${jobSubFolder.id}:/${encodeURIComponent(dnFileName)}:/content`;
@@ -13440,7 +13552,12 @@ async function confirmGenerateDnSQL() {
           ? `${dnRef} generated for ${toShip.length} item${toShip.length>1?'s':''}.`
           : `${dnRef} generated for ${rideAlongs.length} ride-along item${rideAlongs.length>1?'s':''}.`);
     toast(msg, 'success');
-    if (currentJob?.id) await loadJobBomItems(parseInt(currentJob.id));
+    // Refresh every job the DN touched (statuses flipped server-side).
+    for (const jid of dnJobIdsUsed) {
+      delete _bomItemsByJob[jid];
+      if (currentJob && parseInt(currentJob.id) === jid) await loadJobBomItems(jid);
+      else await _dnFetchJobItems(jid);
+    }
     renderBOM();
 
     if (uploaded.webUrl) window.open(uploaded.webUrl, '_blank');
@@ -14440,29 +14557,87 @@ async function saveJobSheet() {
 
 let _pendingSdn = null;
 
-function openSiteDnModal() {
+async function openSiteDnModal() {
   const jobId = currentJob?.id ? parseInt(currentJob.id) : null;
   if (!jobId) { toast('No job selected.', 'error'); return; }
 
-  const all = _bomItemsByJob[jobId] || [];
+  _sdnJobIds = [jobId];
+  const built = await _sdnRebuildList();
+  if (!built) {
+    toast('Nothing to ship to site. Fabricated items must be ready for despatch first.', 'error');
+    return;
+  }
+  _dnRenderJobsPicker('sdnJobsList', _sdnJobIds, 'sdnJobTick');
+
+  // Prefill the editable delivery details from the project. Everything here is
+  // editable in the modal — if the project data is wrong or missing, the user
+  // fixes it here and still gets a correct DN without touching the database.
+  const proj = currentProject;
+  // Job Sheet is the default source (falls back to project site / client
+  // details when no job sheet is saved yet) — see _jobSheetResolved().
+  const r = _jobSheetResolved(proj);
+  const nameGuess = (proj?.client && (r.siteName || proj?.name))
+    ? `${proj.client} — ${r.siteName || proj.name}`
+    : (proj?.client || r.siteName || proj?.name || '');
+  const setVal = (id, v) => { const el = document.getElementById(id); if (el) el.value = v || ''; };
+  setVal('sdnDeliverName',  nameGuess);
+  setVal('sdnDeliverAddr',  r.lines.join('\n'));
+  setVal('sdnContactName',  r.contact);
+  setVal('sdnContactPhone', r.phone);
+  setVal('sdnClientPo',     r.po);
+
+  sdnUpdateSelCount();
+  document.getElementById('siteDnModal').classList.add('active');
+}
+
+// Job tick on the SDN modal — rebuild the eligible union across jobs.
+async function sdnJobTick(jobId, on) {
+  jobId = parseInt(jobId);
+  if (on) { if (!_sdnJobIds.includes(jobId)) _sdnJobIds.push(jobId); }
+  else _sdnJobIds = _sdnJobIds.filter(x => x !== jobId);
+  if (!_sdnJobIds.length) _sdnJobIds = [jobId];   // never zero jobs
+  _dnRenderJobsPicker('sdnJobsList', _sdnJobIds, 'sdnJobTick');
+  await _sdnRebuildList();
+}
+
+// Build the SDN eligible union across every ticked job and render the item
+// list, grouped per job when several jobs are covered (fabricated + fixings
+// sub-groups inside each job). Returns false when nothing is eligible.
+async function _sdnRebuildList() {
   const isLoose = i => i.item_type === 'fixing' || i.item_type === 'consumable';
   const outstandingOf = i => Math.max(0, (Number(i.quantity) || 0) - (Number(i.despatched_qty) || 0));
 
   // Fabricated marks: shippable while ready_for_despatch with qty still out.
   // Fixings/consumables: shippable while ready_for_despatch OR already on_site
   // (overship / send replacements — erectors lose bolts).
-  const fabItems = all.filter(i => !isLoose(i) && i.status === 'ready_for_despatch' && outstandingOf(i) > 0);
-  const fixItems = all.filter(i =>  isLoose(i) && (i.status === 'ready_for_despatch' || i.status === 'on_site'));
-  const eligible = [...fabItems, ...fixItems];
-
+  const perJob = [];
+  for (const jid of _sdnJobIds) {
+    const all = await _dnFetchJobItems(jid);
+    const nm = _dnJobName(jid);
+    const tag = i => ({ ...i, _jobId: jid, _jobName: nm });
+    const fabItems = all.filter(i => !isLoose(i) && i.status === 'ready_for_despatch' && outstandingOf(i) > 0).map(tag);
+    const fixItems = all.filter(i =>  isLoose(i) && (i.status === 'ready_for_despatch' || i.status === 'on_site')).map(tag);
+    if (fabItems.length || fixItems.length) perJob.push({ jid, nm, fabItems, fixItems });
+  }
+  const eligible = perJob.flatMap(g => [...g.fabItems, ...g.fixItems]);
   if (!eligible.length) {
-    toast('Nothing to ship to site. Fabricated items must be ready for despatch first.', 'error');
-    return;
+    // Keep the modal usable if it's already open (a tick removed the last
+    // eligible job) — show the empty message rather than a dead list.
+    if (_pendingSdn) {
+      _pendingSdn.items = [];
+      const list0 = document.getElementById('sdnItemList');
+      if (list0) list0.innerHTML = '<div style="color:var(--subtle);font-size:12px;padding:12px">Nothing eligible on the selected jobs.</div>';
+      sdnUpdateSelCount();
+      return false;
+    }
+    return false;
   }
 
-  _pendingSdn = { items: eligible };
+  _pendingSdn = _pendingSdn || {};
+  _pendingSdn.items = eligible;
 
-  document.getElementById('sdnItemCount').textContent = eligible.length;
+  const cEl = document.getElementById('sdnItemCount');
+  if (cEl) cEl.textContent = eligible.length;
 
   // Row template — checkbox, description, outstanding, editable "this delivery" qty.
   const rowHtml = (it) => {
@@ -14497,36 +14672,19 @@ function openSiteDnModal() {
   </div>`;
 
   const groupHead = (label) => `<div style="padding:6px 12px;font-size:10px;color:var(--subtle);text-transform:uppercase;letter-spacing:.05em;background:rgba(255,255,255,.03);border-bottom:1px solid var(--border)">${label}</div>`;
+  const jobHead = (label) => `<div style="padding:6px 12px;font-size:10px;color:#a78bfa;text-transform:uppercase;letter-spacing:.05em;background:rgba(139,92,246,.08);border-bottom:1px solid var(--border);font-weight:700">${escapeHtml(label)}</div>`;
+  const multiJob = perJob.length > 1;
 
   html += '<div style="border:1px solid var(--border);border-radius:8px;overflow:hidden;max-height:340px;overflow-y:auto">';
-  if (fabItems.length) {
-    html += groupHead('Fabricated items') + fabItems.map(rowHtml).join('');
-  }
-  if (fixItems.length) {
-    html += groupHead('🔩 Fixings &amp; loose items') + fixItems.map(rowHtml).join('');
+  for (const g of perJob) {
+    if (multiJob) html += jobHead(g.nm);
+    if (g.fabItems.length) html += groupHead('Fabricated items') + g.fabItems.map(rowHtml).join('');
+    if (g.fixItems.length) html += groupHead('🔩 Fixings &amp; loose items') + g.fixItems.map(rowHtml).join('');
   }
   html += '</div>';
-  list.innerHTML = html;
-
-  // Prefill the editable delivery details from the project. Everything here is
-  // editable in the modal — if the project data is wrong or missing, the user
-  // fixes it here and still gets a correct DN without touching the database.
-  const proj = currentProject;
-  // Job Sheet is the default source (falls back to project site / client
-  // details when no job sheet is saved yet) — see _jobSheetResolved().
-  const r = _jobSheetResolved(proj);
-  const nameGuess = (proj?.client && (r.siteName || proj?.name))
-    ? `${proj.client} — ${r.siteName || proj.name}`
-    : (proj?.client || r.siteName || proj?.name || '');
-  const setVal = (id, v) => { const el = document.getElementById(id); if (el) el.value = v || ''; };
-  setVal('sdnDeliverName',  nameGuess);
-  setVal('sdnDeliverAddr',  r.lines.join('\n'));
-  setVal('sdnContactName',  r.contact);
-  setVal('sdnContactPhone', r.phone);
-  setVal('sdnClientPo',     r.po);
-
+  if (list) list.innerHTML = html;
   sdnUpdateSelCount();
-  document.getElementById('siteDnModal').classList.add('active');
+  return true;
 }
 
 // Read the ship-qty a row is set to (its number input), or 0 if blank/invalid.
@@ -14621,6 +14779,7 @@ async function confirmSiteDn() {
     const clientPo       = getVal('sdnClientPo');
     const deliverToContact = [contactName, contactPhone].filter(Boolean).join(' \u00b7 ');
     const siteName = deliverName || (proj?.client || proj?.name || 'Site delivery');
+    const sdnJobNames = [...new Set(items.map(i => i._jobName).filter(Boolean))];
     const dn = {
       number:          sdnRef,
       createdAt:       new Date().toISOString(),
@@ -14629,6 +14788,7 @@ async function confirmSiteDn() {
       destinationName: siteName,
       deliverTo:       { name: deliverName || 'Site', lines: deliverToLines, contact: deliverToContact },
       finishName:      'Site delivery',
+      jobNames:        sdnJobNames,
       items
     };
     // 3. Render PDF natively with jsPDF (no html2canvas).
@@ -14639,8 +14799,12 @@ async function confirmSiteDn() {
     if (!projectFolder) throw new Error('Project folder not found on SharePoint');
     const driveId = projectFolder.parentReference?.driveId || BAMA_DRIVE_ID;
     const deliveriesFolder = await getOrCreateSubfolder(projectFolder.id, '07 - Deliveries', driveId);
-    const jobFolderName = (job && (job.folderName || job.name)) || 'Unassigned';
-    const jobSubFolder  = await getOrCreateSubfolder(deliveriesFolder.id, jobFolderName, driveId);
+    // Multi-job SDN files at the 07 - Deliveries root (refs are unique);
+    // single-job keeps the job folder as before.
+    const sdnJobIdsUsed = [...new Set(items.map(i => i._jobId).filter(Boolean))];
+    const jobSubFolder = (sdnJobIdsUsed.length > 1)
+      ? deliveriesFolder
+      : await getOrCreateSubfolder(deliveriesFolder.id, (job && (job.folderName || job.name)) || 'Unassigned', driveId);
     const sdnFileName = `${sdnRef}.pdf`;
     const token = await getToken();
     const upUrl = `https://graph.microsoft.com/v1.0/drives/${driveId}/items/${jobSubFolder.id}:/${encodeURIComponent(sdnFileName)}:/content`;
@@ -14665,8 +14829,13 @@ async function confirmSiteDn() {
     } catch (e) { console.warn('SDN file backfill failed (non-fatal):', e.message); }
 
     closeSiteDnModal();
-    toast(`${sdnRef} generated — ${totalPcs} pc${totalPcs > 1 ? 's' : ''} across ${lines.length} line${lines.length > 1 ? 's' : ''} sent to site.`, 'success');
-    if (currentJob?.id) await loadJobBomItems(parseInt(currentJob.id));
+    toast(`${sdnRef} generated — ${totalPcs} pc${totalPcs > 1 ? 's' : ''} across ${lines.length} line${lines.length > 1 ? 's' : ''}${sdnJobNames.length > 1 ? ` from ${sdnJobNames.length} jobs` : ''} sent to site.`, 'success');
+    // Refresh every job the SDN touched (despatched_qty bumped server-side).
+    for (const jid of sdnJobIdsUsed) {
+      delete _bomItemsByJob[jid];
+      if (currentJob && parseInt(currentJob.id) === jid) await loadJobBomItems(jid);
+      else await _dnFetchJobItems(jid);
+    }
     renderBOM();
     renderSite();
 
@@ -14889,7 +15058,8 @@ function drawDnPDF(jsPDF, dn, proj, job, logoDataUri) {
     { label: 'Date:',       value: fmtDate },
     { label: 'Project:',    value: proj && proj.name },
     { label: 'Project No:', value: proj && proj.id },
-    { label: 'Job:',        value: job && job.name },
+    { label: (Array.isArray(dn.jobNames) && dn.jobNames.length > 1) ? 'Jobs:' : 'Job:',
+      value: (Array.isArray(dn.jobNames) && dn.jobNames.length) ? dn.jobNames.join(', ') : (job && job.name) },
     { label: isClient ? 'Client PO:' : null, value: isClient ? dn.clientPo : null },
     { label: isClient ? 'Client:' : 'Supplier:', value: dn.destinationName },
     { label: isClient ? null : 'For:', value: isClient ? null : dn.finishName }
@@ -14961,8 +15131,12 @@ function drawDnPDF(jsPDF, dn, proj, job, logoDataUri) {
   // (_shipQty) — which may be a partial of the full ordered line.
   const isLoose  = it => it.item_type === 'fixing' || it.item_type === 'consumable';
   const shipQtyOf = it => (it._shipQty != null ? Number(it._shipQty) : (Number(it.quantity) || 0));
-  const fabRows = (dn.items || []).filter(it => !isLoose(it));
-  const fixRows = (dn.items || []).filter(isLoose);
+  // Multi-job note: sort rows by job and banner each job's block so it's
+  // unmistakable on paper which items belong to which job.
+  const dnMultiJob = new Set((dn.items || []).map(it => it._jobId).filter(x => x != null)).size > 1;
+  const byJob = (a, b) => String(a._jobName || '').localeCompare(String(b._jobName || ''));
+  const fabRows = (dn.items || []).filter(it => !isLoose(it)).sort(dnMultiJob ? byJob : () => 0);
+  const fixRows = (dn.items || []).filter(isLoose).sort(dnMultiJob ? byJob : () => 0);
 
   let grandWeight = 0, grandAnyWeight = false;
 
@@ -14980,6 +15154,18 @@ function drawDnPDF(jsPDF, dn, proj, job, logoDataUri) {
     cols.forEach(c => cellTextIn(c, c.title, y + 4.7));
     y += 7;
   };
+  // Accent-tinted full-width banner naming the job a block of rows belongs to
+  // (multi-job notes only).
+  const drawJobBanner = (name, cols) => {
+    const h = 6.5;
+    if (y + h > pageH - marginB - 30) { doc.addPage(); y = marginL + 4; drawColsHeader(cols); }
+    doc.setFillColor(255, 240, 228); doc.rect(marginL, y, usableW, h, 'F');
+    setDraw(RULE); doc.setLineWidth(0.15); doc.rect(marginL, y, usableW, h);
+    setText(accent); doc.setFont('helvetica', 'bold'); doc.setFontSize(8.5);
+    doc.text(`JOB: ${String(name || '').toUpperCase()}`, marginL + 2, y + 4.4);
+    setText(TEXT); doc.setFont('helvetica', 'normal'); doc.setFontSize(9);
+    y += h;
+  };
 
   // — Fabricated items —
   if (fabRows.length) {
@@ -14995,7 +15181,9 @@ function drawDnPDF(jsPDF, dn, proj, job, logoDataUri) {
     drawColsHeader(cols);
     doc.setFont('helvetica', 'normal'); doc.setFontSize(9);
     let tQty = 0, tWt = 0, anyWt = false;
+    let _fabLastJob = null;
     for (const it of fabRows) {
+      if (dnMultiJob && it._jobName !== _fabLastJob) { _fabLastJob = it._jobName; drawJobBanner(it._jobName, cols); }
       const qty     = shipQtyOf(it);
       const unitWt  = it.assembly_weight_kg != null ? Number(it.assembly_weight_kg) : null;
       const lengthM = it.assembly_max_length_mm != null ? Number(it.assembly_max_length_mm) : null;
@@ -15053,7 +15241,9 @@ function drawDnPDF(jsPDF, dn, proj, job, logoDataUri) {
     drawColsHeader(cols);
     doc.setFont('helvetica', 'normal'); doc.setFontSize(9);
     let tQty = 0, tWt = 0, anyWt = false;
+    let _fixLastJob = null;
     for (const it of fixRows) {
+      if (dnMultiJob && it._jobName !== _fixLastJob) { _fixLastJob = it._jobName; drawJobBanner(it._jobName, cols); }
       const qty    = shipQtyOf(it);
       const wtEach = it.unit_weight_kg != null ? Number(it.unit_weight_kg) : null;
       const lineWt = wtEach != null ? wtEach * qty : null;

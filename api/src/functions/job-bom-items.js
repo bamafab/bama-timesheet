@@ -510,9 +510,17 @@ app.http('job-bom-items-generate-dn', {
             if (!finishServiceId) {
                 return badRequest('Items without a finish cannot go on a DN — they are already ready for despatch', request);
             }
-            const jobIds = new Set(checkRes.recordset.map(r => r.job_id));
-            if (jobIds.size > 1) {
-                return badRequest('All items on a DN must belong to the same job', request);
+            // Multi-job DNs are allowed as long as every job belongs to the
+            // SAME PROJECT (one delivery run can carry several jobs' steel).
+            const jobIds = [...new Set(checkRes.recordset.map(r => r.job_id))];
+            if (jobIds.length > 1) {
+                const jparams = {};
+                const jph = jobIds.map((id, i) => { const k = `jid${i}`; jparams[k] = id; return `@${k}`; }).join(',');
+                const jrows = await query(
+                    `SELECT DISTINCT project_number FROM DrawingJobs WHERE id IN (${jph})`, jparams);
+                if (jrows.recordset.length > 1) {
+                    return badRequest('All items on a DN must belong to the same project', request);
+                }
             }
             const notPending = checkRes.recordset.filter(r => r.status !== 'pending');
             if (notPending.length) {
@@ -679,9 +687,17 @@ app.http('job-bom-items-generate-sdn', {
             if (checkRes.recordset.length !== itemIds.length) {
                 return badRequest('One or more BOM items not found', request);
             }
-            const jobIds = new Set(checkRes.recordset.map(r => r.job_id));
-            if (jobIds.size > 1) {
-                return badRequest('All items on an SDN must belong to the same job', request);
+            // Multi-job SDNs are allowed as long as every job belongs to the
+            // SAME PROJECT (one site delivery can carry several jobs' items).
+            const jobIds = [...new Set(checkRes.recordset.map(r => r.job_id))];
+            if (jobIds.length > 1) {
+                const jparams = {};
+                const jph = jobIds.map((id, i) => { const k = `jid${i}`; jparams[k] = id; return `@${k}`; }).join(',');
+                const jrows = await query(
+                    `SELECT DISTINCT project_number FROM DrawingJobs WHERE id IN (${jph})`, jparams);
+                if (jrows.recordset.length > 1) {
+                    return badRequest('All items on an SDN must belong to the same project', request);
+                }
             }
 
             const rowById = new Map(checkRes.recordset.map(r => [r.id, r]));
