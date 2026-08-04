@@ -19809,6 +19809,161 @@ async function _dnRenderRegister(projectId, jobId) {
   wrap.innerHTML = html;
 }
 
+// ── Project-level deliveries register (modal + PDF export) ──────────────────
+// One place for the WHOLE project: every DN/SDN, which jobs it covered, when
+// it went, and the PDF link. Export renders the register as a single
+// house-style document (bamaDocHeader/bamaSectionHeading/bamaDocFooter).
+async function openProjectDeliveriesModal() {
+  const proj = currentProject;
+  if (!proj?.dbId) { toast('No project selected.', 'error'); return; }
+  const pid = parseInt(proj.dbId);
+  let rows = [];
+  try {
+    if (!_dnRegCache[pid]) _dnRegCache[pid] = await api.get(`/api/dn-register?projectId=${pid}`);
+    rows = _dnRegCache[pid] || [];
+  } catch (e) {
+    toast('Could not load the deliveries register: ' + e.message + ' \u2014 has create-delivery-note-register.sql been run?', 'error');
+    return;
+  }
+  const list = document.getElementById('projDeliveriesList');
+  const btn = document.getElementById('projDelExportBtn');
+  if (btn) { btn.disabled = !rows.length; btn.style.opacity = rows.length ? '1' : '.4'; }
+  if (list) {
+    list.innerHTML = rows.length
+      ? rows.map(r => {
+          const names = _dnRegJobNames(r);
+          const dateStr = r.created_at ? new Date(r.created_at).toLocaleDateString('en-GB') : '';
+          const isSite = r.kind === 'site';
+          const chip = isSite
+            ? `<span style="font-size:10px;color:#3ecf8e;background:rgba(62,207,142,.1);border:1px solid rgba(62,207,142,.3);border-radius:4px;padding:1px 6px;white-space:nowrap">&rarr; Site</span>`
+            : `<span style="font-size:10px;color:var(--accent);background:rgba(255,107,0,.1);border:1px solid rgba(255,107,0,.3);border-radius:4px;padding:1px 6px;white-space:nowrap">&rarr; ${escapeHtml(r.destination || 'Supplier')}</span>`;
+          return `<div class="file-row">
+            <div class="file-row-icon">&#128666;</div>
+            <div class="file-row-name"><b>${escapeHtml(r.ref)}</b> ${chip}
+              <div style="color:var(--subtle);font-size:11px;margin-top:2px">${escapeHtml(names.join(', ') || '\u2014')} \u00b7 ${r.total_qty || 0} pcs \u00b7 ${r.line_count || 0} line${(r.line_count || 0) === 1 ? '' : 's'}</div>
+            </div>
+            <div class="file-row-date">${dateStr}</div>
+            <div class="file-row-actions">
+              ${r.sharepoint_web_url ? `<a href="${r.sharepoint_web_url}" target="_blank" class="btn btn-ghost" style="padding:4px 10px;font-size:11px;text-decoration:none">&#128065; View</a>` : ''}
+            </div>
+          </div>`;
+        }).join('')
+      : `<div style="color:var(--subtle);font-size:13px;padding:16px;text-align:center">No delivery notes registered on this project yet. Notes generated from now on register automatically.</div>`;
+  }
+  document.getElementById('projDeliveriesModal').classList.add('active');
+}
+
+function closeProjectDeliveriesModal() {
+  document.getElementById('projDeliveriesModal').classList.remove('active');
+}
+
+// Job names for a register row — resolved from the loaded project jobs list.
+function _dnRegJobNames(r) {
+  let ids = [];
+  try { ids = (JSON.parse(r.job_ids || '[]') || []).map(Number); } catch (e) {}
+  return ids.map(_dnJobName);
+}
+
+// House-style register document: one table, newest first — Ref, Date, To,
+// Jobs covered, Lines, Pcs. Opens in a new tab for print / save.
+async function exportProjectDeliveriesPdf() {
+  const proj = currentProject;
+  if (!proj?.dbId) return;
+  const pid = parseInt(proj.dbId);
+  const rows = _dnRegCache[pid] || [];
+  if (!rows.length) { toast('Nothing to export yet.', 'error'); return; }
+  try {
+    const logoDataUri = await loadLogoDataUri();
+    const JsPDFCtor = await resolveJsPDFCtor();
+    if (!JsPDFCtor) throw new Error('PDF library failed to load');
+    const doc = new JsPDFCtor({ unit: 'mm', format: 'a4', orientation: 'portrait' });
+    const marginL = 14, marginR = 14, marginB = 16, pageW = 210, pageH = 297;
+    const usableW = pageW - marginL - marginR;
+    const TEXT = [34, 34, 34], MUTED = [90, 90, 90], RULE = [204, 204, 204], HEADFILL = [245, 245, 245];
+    const setText = c => doc.setTextColor(c[0], c[1], c[2]);
+    try { doc.setProperties({ title: `Deliveries Register — ${proj.id}`, author: 'BAMA Fabrication', creator: 'BAMA Fabrication ERP' }); } catch (e) {}
+
+    const _hdr = bamaDocHeader(doc, logoDataUri || '', {
+      title: 'Deliveries Register',
+      marginL, marginR,
+      meta: [
+        { label: 'Project:', value: `${proj.id} \u2014 ${proj.name || ''}` },
+        { label: 'Client:', value: proj.client || '' },
+        { label: 'Generated:', value: new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) },
+        { label: 'Notes:', value: String(rows.length) }
+      ]
+    });
+    let y = _hdr.y + 2;
+    y = bamaSectionHeading(doc, y, 'DELIVERY NOTES \u2014 NEWEST FIRST', { marginL, usableW });
+
+    const cols = [
+      { title: 'Ref',   w: 24, align: 'left'  },
+      { title: 'Date',  w: 22, align: 'left'  },
+      { title: 'To',    w: 44, align: 'left'  },
+      { title: 'Jobs covered', w: usableW - 24 - 22 - 44 - 14 - 14, align: 'left' },
+      { title: 'Lines', w: 14, align: 'right' },
+      { title: 'Pcs',   w: 14, align: 'right' }
+    ];
+    let cx = marginL; cols.forEach(c => { c.x = cx; cx += c.w; });
+    const cellTxt = (c, txt, yy) => {
+      const s = String(txt == null ? '' : txt);
+      if (c.align === 'right') doc.text(s, c.x + c.w - 2, yy, { align: 'right' });
+      else doc.text(s, c.x + 1.5, yy);
+    };
+    const drawHead = () => {
+      doc.setFillColor(HEADFILL[0], HEADFILL[1], HEADFILL[2]); doc.rect(marginL, y, usableW, 7, 'F');
+      doc.setDrawColor(RULE[0], RULE[1], RULE[2]); doc.setLineWidth(0.2); doc.rect(marginL, y, usableW, 7);
+      setText(TEXT); doc.setFont('helvetica', 'bold'); doc.setFontSize(8.5);
+      cols.forEach(c => cellTxt(c, c.title, y + 4.7));
+      y += 7;
+    };
+    drawHead();
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(8.5);
+    let tPcs = 0, tLines = 0;
+    for (const r of rows) {
+      const names = _dnRegJobNames(r).join(', ') || '\u2014';
+      const to = r.kind === 'site' ? `Site${r.destination ? ' \u2014 ' + r.destination : ''}` : (r.destination || 'Supplier');
+      const dateStr = r.created_at ? new Date(r.created_at).toLocaleDateString('en-GB') : '';
+      const toL = doc.splitTextToSize(to, cols[2].w - 3);
+      const jobsL = doc.splitTextToSize(names, cols[3].w - 3);
+      const n = Math.max(toL.length, jobsL.length, 1);
+      const rowH = n * 4 + 2.5;
+      if (y + rowH > pageH - marginB) { doc.addPage(); y = marginL + 4; drawHead(); doc.setFont('helvetica', 'normal'); doc.setFontSize(8.5); }
+      const b = y + 4.3;
+      setText(TEXT);
+      doc.setFont('helvetica', 'bold'); cellTxt(cols[0], r.ref, b); doc.setFont('helvetica', 'normal');
+      cellTxt(cols[1], dateStr, b);
+      toL.forEach((l, i) => cellTxt(cols[2], l, b + i * 4));
+      jobsL.forEach((l, i) => cellTxt(cols[3], l, b + i * 4));
+      cellTxt(cols[4], r.line_count || 0, b);
+      cellTxt(cols[5], r.total_qty || 0, b);
+      doc.setDrawColor(RULE[0], RULE[1], RULE[2]); doc.setLineWidth(0.15);
+      doc.line(marginL, y + rowH, pageW - marginR, y + rowH);
+      y += rowH;
+      tPcs += (Number(r.total_qty) || 0); tLines += (Number(r.line_count) || 0);
+    }
+    const totH = 7;
+    if (y + totH > pageH - marginB) { doc.addPage(); y = marginL + 4; }
+    doc.setFillColor(HEADFILL[0], HEADFILL[1], HEADFILL[2]); doc.rect(marginL, y, usableW, totH, 'F');
+    doc.setDrawColor(RULE[0], RULE[1], RULE[2]); doc.setLineWidth(0.2); doc.rect(marginL, y, usableW, totH);
+    setText(TEXT); doc.setFont('helvetica', 'bold'); doc.setFontSize(9);
+    cellTxt(cols[0], 'TOTAL', y + 4.7);
+    cellTxt(cols[4], tLines, y + 4.7);
+    cellTxt(cols[5], tPcs, y + 4.7);
+    y += totH;
+
+    bamaDocFooter(doc, { marginL, marginR, caption: `Deliveries Register \u2014 ${proj.id}${proj.name ? ' \u00b7 ' + proj.name : ''}` });
+
+    const blob = doc.output('blob');
+    console.log('Deliveries register PDF blob:', blob.size, 'bytes');
+    const url = URL.createObjectURL(blob);
+    window.open(url, '_blank');
+    setTimeout(() => URL.revokeObjectURL(url), 60000);
+  } catch (e) {
+    toast('Register export failed: ' + e.message, 'error');
+  }
+}
+
 // ═══════════════════════════════════════════
 // SHARED: FILE ROW RENDERER
 // ═══════════════════════════════════════════

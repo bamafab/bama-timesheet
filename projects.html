@@ -120,6 +120,9 @@
         <button class="btn btn-primary" style="padding:8px 16px;font-size:12px" onclick="openCreateJobModal()">
           &#43; Add Job
         </button>
+        <button class="btn" style="padding:8px 16px;font-size:12px;background:rgba(59,130,246,.08);border:1px solid rgba(59,130,246,.25);color:#60a5fa" onclick="openProjectDeliveriesModal()">
+          &#128666; Deliveries
+        </button>
         <button class="btn" style="padding:8px 16px;font-size:12px;background:rgba(59,130,246,.08);border:1px solid rgba(59,130,246,.25);color:#60a5fa" onclick="openJobSheetModal()">
           &#128203; Job Sheet
         </button>
@@ -885,6 +888,23 @@
   </div>
 </div>
 
+<!-- PROJECT DELIVERIES REGISTER — every DN/SDN on the project, one place. -->
+<div class="modal-overlay" id="projDeliveriesModal">
+  <div class="modal" style="width:760px;max-width:97vw;max-height:92vh;overflow-y:auto">
+    <div class="modal-title" style="margin-bottom:6px">&#128666; Deliveries register</div>
+    <div style="color:var(--muted);font-size:12px;margin-bottom:14px">
+      Every delivery note on this project, newest first — supplier DNs and site SDNs,
+      which jobs each one covered, when it went, and the PDF link.
+      <b>Export PDF</b> produces the whole register as one document.
+    </div>
+    <div id="projDeliveriesList" style="margin-bottom:16px"></div>
+    <div style="display:flex;gap:10px">
+      <button class="btn btn-primary" id="projDelExportBtn" onclick="exportProjectDeliveriesPdf()" style="padding:10px 18px;font-size:13px">&#128438; Export PDF</button>
+      <button class="btn btn-ghost" onclick="closeProjectDeliveriesModal()" style="padding:10px 18px;font-size:13px">Close</button>
+    </div>
+  </div>
+</div>
+
 <!-- RAMS GENERATOR (Site Installation) — phase 1: modal shell only. -->
 <div class="modal-overlay" id="ramsModal">
   <div class="modal" style="width:820px;max-width:97vw;max-height:92vh;overflow-y:auto">
@@ -1089,6 +1109,6 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf-lib/1.17.1/pdf-lib.min.js"></script>
 <script src="steel-data.js?v=20260731s"></script>
-<script src="shared.js?v=20260803k"></script>
+<script src="shared.js?v=20260803l"></script>
 </body>
 </html>
