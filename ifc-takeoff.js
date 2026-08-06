@@ -74,29 +74,63 @@
 
   // ── Determine the file's length unit → factor to convert model units to mm ─
   // web-ifc returns geometry in the file's own declared length unit. A file in
-  // millimetres needs ×1; one in metres needs ×1000. Read IfcSIUnit / prefix so
-  // we never guess. Defaults to 1 (assume mm) if nothing is declared.
+  // millimetres needs ×1; one in metres needs ×1000. Two declaration styles:
+  //   • IfcSIUnit LENGTHUNIT (Revit/Tekla): prefix tells us MILLI/plain metres.
+  //   • IfcConversionBasedUnit LENGTHUNIT (CATIA/3DEXPERIENCE): e.g. 'METRE'
+  //     defined as 1000 × an underlying milli-metre SIUnit. Missing this case
+  //     under-scales every dimension 1000× — so resolve the conversion chain.
+  // Defaults to 1 (assume mm) if nothing is declared.
+  function siLengthFactorMM(u) {
+    if (!(u && u.Name && u.Name.value === 'METRE')) return null;
+    var pfx = u.Prefix && u.Prefix.value;
+    if (pfx === 'MILLI') return 1;
+    if (pfx === 'CENTI') return 10;
+    if (pfx === 'DECI') return 100;
+    return 1000; // plain metres (or unknown prefix — treat as m)
+  }
   function lengthUnitToMM(api, modelID) {
     var W = global.WebIFC;
-    var factor = 1; // assume mm
+    try {
+      // Preferred: walk the project's IfcUnitAssignment — that is the unit the
+      // geometry is actually authored in (a stray SIUnit may only be the BASE
+      // of a conversion unit, as in CATIA exports).
+      var uaIds = api.GetLineIDsWithType(modelID, W.IFCUNITASSIGNMENT);
+      for (var a = 0; a < uaIds.size(); a++) {
+        var ua = api.GetLine(modelID, uaIds.get(a));
+        var units = ua.Units || [];
+        for (var j = 0; j < units.length; j++) {
+          if (!units[j] || units[j].value == null) continue;
+          var u = api.GetLine(modelID, units[j].value);
+          if (!(u.UnitType && u.UnitType.value === 'LENGTHUNIT')) continue;
+          var si = siLengthFactorMM(u);
+          if (si != null) return si; // plain IfcSIUnit LENGTHUNIT
+          // IfcConversionBasedUnit: factor = ValueComponent × base-unit factor
+          if (u.ConversionFactor && u.ConversionFactor.value != null) {
+            var mw = api.GetLine(modelID, u.ConversionFactor.value);
+            var vc = mw && mw.ValueComponent;
+            var val = (vc && vc.value != null) ? Number(vc.value) : NaN;
+            var base = 1;
+            if (mw && mw.UnitComponent && mw.UnitComponent.value != null) {
+              var bu = api.GetLine(modelID, mw.UnitComponent.value);
+              var bf = siLengthFactorMM(bu);
+              if (bf != null) base = bf;
+            }
+            if (isFinite(val) && val > 0) return val * base;
+          }
+        }
+      }
+    } catch (e) { /* fall through to the plain SIUnit scan */ }
     try {
       var ids = api.GetLineIDsWithType(modelID, W.IFCSIUNIT);
       for (var i = 0; i < ids.size(); i++) {
-        var u = api.GetLine(modelID, ids.get(i));
-        if (u.UnitType && u.UnitType.value === 'LENGTHUNIT' && u.Name && u.Name.value === 'METRE') {
-          var pfx = u.Prefix && u.Prefix.value;
-          if (pfx === 'MILLI') factor = 1;
-          else if (pfx === 'CENTI') factor = 10;
-          else if (pfx === 'DECI') factor = 100;
-          else if (!pfx || pfx === null) factor = 1000; // plain metres
-          else factor = 1000;
-          return factor;
+        var u2 = api.GetLine(modelID, ids.get(i));
+        if (u2.UnitType && u2.UnitType.value === 'LENGTHUNIT') {
+          var f = siLengthFactorMM(u2);
+          if (f != null) return f;
         }
       }
-    } catch (e) { /* fall back to mm */ }
-    // Conversion-based units (e.g. inches) — rare in structural IFC; treat the
-    // model as already-mm rather than mangling it.
-    return factor;
+    } catch (e2) { /* fall back to mm */ }
+    return 1;
   }
 
   // ── Member length = longest axis of its LOCAL-coordinate mesh bbox ────────
@@ -132,6 +166,81 @@
     // unit or geometry error rather than a real steel section).
     if (!isFinite(mm) || mm <= 0 || mm > 50000) return null;
     return mm;
+  }
+
+  // ── PARTS MODE: mesh a solid element → per-part volume, bbox, mass ─────────
+  // For CAD-style exports (CATIA / SolidWorks / Inventor) that contain no
+  // IfcBeam/Column/Member — just IfcBuildingElementProxy / IfcPlate solids
+  // (brackets, plate assemblies). Volume is the exact signed-tetrahedron sum
+  // over the triangulated mesh (divergence theorem) — deterministic geometry,
+  // nothing estimated. Mass = volume × 7850 kg/m³ (structural steel).
+  var STEEL_KG_PER_MM3 = 7.85e-6;
+
+  function solidPartsOf(api, modelID, expressID, unitMM) {
+    var parts = [];
+    api.StreamMeshes(modelID, [expressID], function (mesh) {
+      var g = mesh.geometries;
+      for (var i = 0; i < g.size(); i++) {
+        var pg = g.get(i);
+        var geo = api.GetGeometry(modelID, pg.geometryExpressID);
+        var verts = api.GetVertexArray(geo.GetVertexData(), geo.GetVertexDataSize());
+        var idx = api.GetIndexArray(geo.GetIndexData(), geo.GetIndexDataSize());
+        var m = pg.flatTransformation;
+        function tx(vi) {
+          var x = verts[vi * 6], y = verts[vi * 6 + 1], z = verts[vi * 6 + 2];
+          return [
+            m[0] * x + m[4] * y + m[8]  * z + m[12],
+            m[1] * x + m[5] * y + m[9]  * z + m[13],
+            m[2] * x + m[6] * y + m[10] * z + m[14]
+          ];
+        }
+        var vol = 0;
+        var mn = [Infinity, Infinity, Infinity], mx = [-Infinity, -Infinity, -Infinity];
+        for (var t = 0; t < idx.length; t += 3) {
+          var a = tx(idx[t]), b = tx(idx[t + 1]), c = tx(idx[t + 2]);
+          vol += (a[0] * (b[1] * c[2] - b[2] * c[1])
+                - a[1] * (b[0] * c[2] - b[2] * c[0])
+                + a[2] * (b[0] * c[1] - b[1] * c[0])) / 6;
+          for (var p = 0; p < 3; p++) {
+            var pt = p === 0 ? a : (p === 1 ? b : c);
+            for (var k = 0; k < 3; k++) {
+              if (pt[k] < mn[k]) mn[k] = pt[k];
+              if (pt[k] > mx[k]) mx[k] = pt[k];
+            }
+          }
+        }
+        var u = unitMM || 1;
+        var volMM3 = Math.abs(vol) * u * u * u;
+        if (!isFinite(volMM3) || volMM3 <= 0) continue;
+        var dims = [(mx[0] - mn[0]) * u, (mx[1] - mn[1]) * u, (mx[2] - mn[2]) * u]
+          .sort(function (x, y) { return y - x; }); // [L, W, T] descending
+        parts.push({ kg: volMM3 * STEEL_KG_PER_MM3, volMM3: volMM3, dims: dims });
+      }
+    });
+    return parts;
+  }
+
+  // Human label for a solid part from its measured geometry:
+  //  • bbox ≥90% full → a rectangular plate/flat → "PLT T x W x L"
+  //  • matches a solid cylinder on its two near-equal minor axes → "Bar ØD x L"
+  //  • anything else → "Solid part L x W x T" (machined/welded body)
+  function labelPart(part) {
+    var d = part.dims;
+    var r1 = function (v) { return Math.round(v * 10) / 10; };
+    var L = r1(d[0]), W = r1(d[1]), T = r1(d[2]);
+    var bboxVol = d[0] * d[1] * d[2];
+    if (bboxVol > 0 && part.volMM3 / bboxVol >= 0.9) {
+      return 'PLT ' + T + ' x ' + W + ' x ' + L;
+    }
+    // Cylinder test: minor axes within 5% of each other, and volume within
+    // ±10% of π·(D/2)²·L for D = mean of the minor axes.
+    if (d[2] > 0 && d[1] / d[2] <= 1.05) {
+      var D = (d[1] + d[2]) / 2;
+      var cyl = Math.PI * (D / 2) * (D / 2) * d[0];
+      var fit = part.volMM3 / cyl;
+      if (fit >= 0.9 && fit <= 1.1) return 'Bar \u00D8' + r1(D) + ' x ' + L;
+    }
+    return 'Solid part ' + L + ' x ' + W + ' x ' + T;
   }
 
   // ── Map every element → its containing storey name (level) ────────────────
@@ -238,6 +347,59 @@
           counts[label]++;
         }
       }
+
+      // ── PARTS FALLBACK ─────────────────────────────────────────────────
+      // No linear steel members at all: this is a CAD solids export (CATIA/
+      // SolidWorks bracket or plate assembly). Measure every solid instead —
+      // per-part mesh volume × 7850 → kg each — and emit EA rows QB already
+      // knows how to price (kgm = kg each, length 1000, same as the staircase
+      // engine's tread rows). Identical parts group into a qty.
+      var partsMode = false;
+      var partsCount = 0;
+      var totalKg = 0;
+      if (!rows.length) {
+        var partClasses = [
+          WebIFC.IFCBUILDINGELEMENTPROXY, WebIFC.IFCPLATE,
+          WebIFC.IFCDISCRETEACCESSORY, WebIFC.IFCMECHANICALFASTENER
+        ];
+        var grouped = {}; // key → row
+        for (var pc = 0; pc < partClasses.length; pc++) {
+          if (partClasses[pc] == null) continue;
+          var pIds = api.GetLineIDsWithType(modelID, partClasses[pc]);
+          for (var pi = 0; pi < pIds.size(); pi++) {
+            var peid = pIds.get(pi);
+            var pProps = api.GetLine(modelID, peid);
+            var elName = (pProps.Name && pProps.Name.value ? String(pProps.Name.value) : '')
+              .replace(/\.(step|stp|ifc)$/i, '').trim();
+            var parts = solidPartsOf(api, modelID, peid, unitMM);
+            for (var pp = 0; pp < parts.length; pp++) {
+              var part = parts[pp];
+              // Skip mesh slivers under 10g — export artefacts, not steel.
+              if (part.kg < 0.01) continue;
+              partsMode = true;
+              partsCount++;
+              totalKg += part.kg;
+              var kgEach = Math.round(part.kg * 100) / 100;
+              var dimKey = part.dims.map(function (v) { return Math.round(v * 2) / 2; }).join('x');
+              var key = elName + '|' + dimKey + '|' + kgEach;
+              if (grouped[key]) { grouped[key].qty++; continue; }
+              grouped[key] = {
+                type: labelPart(part),
+                length: 1000,          // EA convention: weight = (length/1000)·kgm·qty
+                qty: 1,
+                kgm: kgEach,           // kg per piece — measured, not estimated
+                rate: rateFn ? rateFn('PLT') : null,
+                _unit: 'EA',
+                _notes: elName,
+                _ifcClass: 'PART',
+                _confidence: 'exact',  // geometry-derived weight — nothing fuzzy
+                _rawSection: labelPart(part)
+              };
+            }
+          }
+        }
+        Object.keys(grouped).forEach(function (k) { rows.push(grouped[k]); });
+      }
     } finally {
       api.CloseModel(modelID);
     }
@@ -245,12 +407,16 @@
     return {
       rows: rows,
       summary: {
-        total: rows.length,
+        total: partsMode ? partsCount : rows.length,
         beams: counts.BEAM,
         columns: counts.COLUMN,
         members: counts.MEMBER,
         missingLength: missingLen,
-        unmatchedSection: unmatched,
+        unmatchedSection: partsMode ? 0 : unmatched,
+        mode: partsMode ? 'parts' : 'members',
+        parts: partsCount,
+        uniqueParts: partsMode ? rows.length : 0,
+        totalKg: partsMode ? Math.round(totalKg * 10) / 10 : null,
         levels: Array.from(new Set(rows.map(function (r) { return r._notes; }).filter(Boolean)))
       }
     };
