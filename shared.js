@@ -20962,7 +20962,7 @@ async function ocrAssemblyPdf(file) {
 
 LAYOUT 1 — Tekla assembly drawing: a SUMMARY TABLE in the top-right corner with columns
   Mark | Quantity | Profile | Length | Material | Area (m²) | Weight (kg)
-The FIRST row is the assembly itself (e.g. RL1 | 26 | "Values for ONE assembly"). Subsequent rows are the parts making up ONE assembly. The LAST row is "Totals for ONE assembly" (area + weight). Near the bottom centre there may be finish text like "26 No. Mkd RL1 (Galvanised)" — the parenthesised text is the finish.
+The FIRST row is the assembly itself (e.g. RL1 | 26 | "Values for ONE assembly"). Subsequent rows are the parts making up ONE assembly. The LAST row is "Totals for ONE assembly" (area + weight). CRITICAL: never include the first (assembly) row or the totals row in "parts" — parts are ONLY the component rows between them, and their quantities are per ONE assembly. "total_weight_kg" MUST be the printed "Totals for ONE assembly" weight figure, copied as printed. Near the bottom centre there may be finish text like "26 No. Mkd RL1 (Galvanised)" — the parenthesised text is the finish.
 
 LAYOUT 2 — sketch/SolidWorks-style sheet (title block bottom-right with fields like "Sketch Contents", "Quantity required", "Dwg No", "Sheet", "Project"): there is NO parts table. Instead:
 - assembly name = the "Sketch Contents" field (e.g. "Basement Column 1-A"). Prefer a short mark if the sheet gives one (e.g. "B-Column-1-A"), else use the sketch contents text.
@@ -21233,6 +21233,15 @@ function renderAssemblyBatch() {
             </tr></thead>
             <tbody id="armParts_${qi}">${_armPartsRowsHtml(ocr.parts || [], qi)}</tbody>
           </table>
+          ${(() => {
+            const aw = _asmWeights(ocr);
+            if (!isFinite(aw.weightKg)) return '';
+            const src = aw.printedWt != null ? "drawing's totals row" : 'Σ parts';
+            let warn = '';
+            if (aw.batchSuspect) warn = `<div style="background:rgba(234,179,8,.1);border:1px solid rgba(234,179,8,.35);color:#fcd34d;border-radius:6px;padding:6px 8px;font-size:11px;margin-top:6px;line-height:1.4">&#9888; Parts quantities look like the WHOLE BATCH (&Sigma; parts &asymp; drawing total &times; ${parseInt(ocr.quantity)||1}). Using the drawing's per-assembly total instead.</div>`;
+            else if (aw.mismatch) warn = `<div style="background:rgba(234,179,8,.1);border:1px solid rgba(234,179,8,.35);color:#fcd34d;border-radius:6px;padding:6px 8px;font-size:11px;margin-top:6px;line-height:1.4">&#9888; &Sigma; parts (${aw.sumWt.toFixed(1)} kg) &ne; drawing's per-assembly total (${aw.printedWt.toFixed(1)} kg) &mdash; using the drawing total. Check the parts list.</div>`;
+            return `<div style="text-align:right;font-size:11px;color:var(--muted);padding:5px 2px 0">Weight of ONE assembly: <span style="font-family:var(--font-mono);color:var(--text);font-weight:600">${aw.weightKg.toFixed(2)} kg</span> <span style="color:var(--subtle)">(${src})</span></div>${warn}`;
+          })()}
         </div>
       </div>
     </div>`;
@@ -21370,9 +21379,10 @@ async function armSaveAll() {
     const mark = (ocr.assembly_mark || '').trim();
     const qty = parseInt(ocr.quantity);
     const finishServiceId = item._finishId ? parseInt(item._finishId) : null;
-    const parts = (ocr.parts || []).filter(p => p.part_mark || p.profile);
-    const totalAreaM2 = parts.reduce((s, p) => s + ((Number(p.area_m2) || 0) * (Number(p.quantity) || 1)), 0);
-    const totalWeightKg = parts.reduce((s, p) => s + ((Number(p.weight_kg) || 0) * (Number(p.quantity) || 1)), 0);
+    const parts = _asmCleanParts(ocr);
+    const w = _asmWeights(ocr);
+    const totalAreaM2 = w.areaM2;      // NaN → stored null (weights print as — on the DN)
+    const totalWeightKg = w.weightKg;  // per ONE assembly — drawing's printed total wins
 
     try {
       await postAssemblyCreate(item, mark, qty, finishServiceId, ocr.finish_label_raw ?? null, totalAreaM2, totalWeightKg, parts);
@@ -21423,6 +21433,50 @@ async function armSaveAll() {
     toast(`Saved ${saved}. ${_assemblyQueue.length} still queued (unticked or incomplete).`, saved ? 'success' : 'info');
     renderAssemblyBatch();
   }
+}
+
+// ── Per-ONE-assembly weight/area (DN unit-weight fix, 2026-08-06) ──
+// JobAssemblies.total_weight_kg must be the weight of ONE assembly — every
+// consumer (DN Unit Wt., fab-output kg, project tonnage, despatch %)
+// multiplies it by quantity. Two OCR failure modes inflated it to the
+// whole batch, which then got multiplied by qty AGAIN on the DN:
+//   1. The Layout-1 summary table's FIRST row (the assembly itself,
+//      e.g. RL1 | 26 | ...) misread as a part → Σ parts includes 26×.
+//   2. Drawings whose parts list shows BATCH quantities (total pieces
+//      for all N assemblies) rather than per-one counts.
+// Deterministic guards, no AI arithmetic (two-engine principle):
+//   - drop any "part" whose mark equals the assembly mark;
+//   - the drawing's PRINTED "Totals for ONE assembly" figure
+//     (ocr.total_weight_kg) is authoritative when present; Σ parts is
+//     only the fallback when the drawing prints no total (Layout 2).
+function _asmCleanParts(ocr) {
+  const mark = String(ocr.assembly_mark || '').trim().toLowerCase();
+  return (ocr.parts || []).filter(p => {
+    if (!(p.part_mark || p.profile)) return false;
+    const pm = String(p.part_mark || '').trim().toLowerCase();
+    return !(mark && pm && pm === mark);   // assembly summary row leaked into parts
+  });
+}
+
+function _asmWeights(ocr) {
+  const parts   = _asmCleanParts(ocr);
+  const sumWt   = parts.reduce((s, p) => s + ((Number(p.weight_kg) || 0) * (Number(p.quantity) || 1)), 0);
+  const sumArea = parts.reduce((s, p) => s + ((Number(p.area_m2)  || 0) * (Number(p.quantity) || 1)), 0);
+  const pWt   = Number(ocr.total_weight_kg);
+  const pArea = Number(ocr.total_area_m2);
+  const printedWt   = (ocr.total_weight_kg != null && isFinite(pWt)   && pWt   > 0) ? pWt   : null;
+  const printedArea = (ocr.total_area_m2  != null && isFinite(pArea) && pArea > 0) ? pArea : null;
+  const qty = parseInt(ocr.quantity) || 1;
+  // Σ parts ≈ printed × qty ⇒ the parts list carries batch counts
+  const batchSuspect = printedWt != null && qty > 1 && sumWt > 0 &&
+    Math.abs(sumWt - printedWt * qty) / (printedWt * qty) < 0.05;
+  const mismatch = !batchSuspect && printedWt != null && sumWt > 0 &&
+    Math.abs(sumWt - printedWt) / printedWt > 0.05;
+  return {
+    weightKg: printedWt != null ? printedWt : (sumWt > 0 ? sumWt : NaN),
+    areaM2:   printedArea != null ? printedArea : (sumArea > 0 ? sumArea : NaN),
+    sumWt, printedWt, batchSuspect, mismatch
+  };
 }
 
 async function postAssemblyCreate(item, mark, qty, finishServiceId, finishLabelRaw, totalAreaM2, totalWeightKg, parts) {
