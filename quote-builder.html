@@ -152,7 +152,10 @@ body { background: var(--bg); color: var(--text); font-family: var(--font-body);
 /* ── QUOTATION TAB ── */
 .quotation-line { display: grid; gap: 8px; align-items: center; padding: 6px 0; border-bottom: 1px solid var(--border); }
 .quotation-line-standard { grid-template-columns: 2fr 80px 100px 90px; }
-.quotation-line-custom { grid-template-columns: 2fr 70px 60px 90px 28px; }
+.quotation-line-custom { grid-template-columns: 2fr 60px 50px 85px 90px 28px; }
+.quotation-line-heading { grid-template-columns: 1fr 28px; border-bottom: 2px solid var(--accent); background: rgba(255,255,255,0.02); }
+.ql-heading-input { font-weight: 700; font-size: 13px; background: transparent !important; border-color: transparent !important; }
+.ql-heading-input:focus { border-color: var(--accent) !important; }
 .ql-label { font-size: 13px; color: var(--text); }
 .ql-input { background: var(--surface); border: 1px solid var(--border); border-radius: 5px; padding: 6px 8px; color: var(--text); font-family: var(--font-body); font-size: 13px; width: 100%; }
 .ql-input:focus { outline: none; border-color: var(--accent); }
@@ -1379,6 +1382,7 @@ tr.drag-dragging { opacity:0.35; }
           <div class="section-header">
             <div class="section-title" id="quotationModeLabel">Standard Quote Lines</div>
             <div class="flex gap-8" id="quotationControls">
+              <button class="btn btn-ghost btn-sm" id="addCustomHeadingBtn" onclick="addCustomHeading()" style="display:none">+ Add Heading</button>
               <button class="btn btn-ghost btn-sm" id="addCustomLineBtn" onclick="addCustomLine()" style="display:none">+ Add Line</button>
             </div>
           </div>
@@ -1391,11 +1395,12 @@ tr.drag-dragging { opacity:0.35; }
             <div style="font-size:11px;color:var(--muted);font-weight:600;text-align:right">AMOUNT</div>
           </div>
           <!-- custom mode header -->
-          <div id="quotationCustomHeader" style="display:none;grid-template-columns:2fr 70px 60px 90px 28px;gap:8px;padding:6px 0;border-bottom:2px solid var(--accent);margin-bottom:4px">
+          <div id="quotationCustomHeader" style="display:none;grid-template-columns:2fr 60px 50px 85px 90px 28px;gap:8px;padding:6px 0;border-bottom:2px solid var(--accent);margin-bottom:4px">
             <div style="font-size:11px;color:var(--muted);font-weight:600">DESCRIPTION</div>
             <div style="font-size:11px;color:var(--muted);font-weight:600;text-align:right">QTY</div>
-            <div style="font-size:11px;color:var(--muted);font-weight:600;text-align:right">UNIT</div>
-            <div style="font-size:11px;color:var(--muted);font-weight:600;text-align:right">UNIT PRICE</div>
+            <div style="font-size:11px;color:var(--muted);font-weight:600;text-align:center">UNIT</div>
+            <div style="font-size:11px;color:var(--muted);font-weight:600;text-align:right">RATE</div>
+            <div style="font-size:11px;color:var(--muted);font-weight:600;text-align:right">AMOUNT</div>
             <div></div>
           </div>
 
@@ -8463,6 +8468,7 @@ function setQuoteType(type, save=true) {
   });
   document.getElementById('boqCard').style.display = type==='boq' ? '' : 'none';
   document.getElementById('addCustomLineBtn').style.display = type==='custom' ? '' : 'none';
+  document.getElementById('addCustomHeadingBtn').style.display = type==='custom' ? '' : 'none';
   document.getElementById('quotationModeLabel').textContent = type==='bama' ? 'Standard Quote Lines' : type==='custom' ? 'Custom Quote Lines' : 'Client BoQ — Lump Sum';
   document.getElementById('quotationStandardHeader').style.display = type!=='custom' ? 'grid' : 'none';
   document.getElementById('quotationCustomHeader').style.display   = type==='custom' ? 'grid' : 'none';
@@ -14441,6 +14447,7 @@ function buildClientLines(q) {
   // reconciliation (Σ lines == grand total) valid for custom quotes.
   if (q && q.type === 'custom') {
     return (q.customLines || [])
+      .filter(l => l.kind !== 'heading')   // section headings carry no value
       .map((l, i) => ({
         key:   'custom_' + i,
         desc:  l.desc || '',
@@ -14546,13 +14553,21 @@ function renderQuotationLines() {
   } else if (q.type === 'custom') {
     let sub = 0;
     cont.innerHTML = (q.customLines||[]).map((l,i) => {
-      const amt = (l.qty||1) * (l.price||0);
+      if (l.kind === 'heading') {
+        // Section/area heading (e.g. "Level 1 — Balcony Balustrades") — no figures, excluded from totals
+        return `<div class="quotation-line quotation-line-heading">
+          <input class="ql-input ql-heading-input" value="${escHtml(l.desc||'')}" placeholder="Section heading, e.g. Level 1 — Balcony Balustrades" oninput="updateCustLine(${i},'desc',this.value)">
+          <button class="btn-icon" onclick="removeCustLine(${i})">✕</button>
+        </div>`;
+      }
+      const amt = (parseFloat(l.qty)||1) * (parseFloat(l.price)||0);
       sub += amt;
       return `<div class="quotation-line quotation-line-custom">
-        <input class="ql-input" value="${l.desc||''}" placeholder="Description..." oninput="updateCustLine(${i},'desc',this.value)" style="background:transparent;border-color:transparent">
+        <input class="ql-input" value="${escHtml(l.desc||'')}" placeholder="Description..." oninput="updateCustLine(${i},'desc',this.value)" style="background:transparent;border-color:transparent">
         <input class="ql-input" type="number" value="${l.qty||1}" oninput="updateCustLine(${i},'qty',this.value)" style="text-align:right">
-        <input class="ql-input" value="${l.unit||'m'}" oninput="updateCustLine(${i},'unit',this.value)" style="text-align:center">
+        <input class="ql-input" value="${escHtml(l.unit||'m')}" oninput="updateCustLine(${i},'unit',this.value)" style="text-align:center">
         <input class="ql-input" type="number" value="${l.price||0}" oninput="updateCustLine(${i},'price',this.value)" style="text-align:right;font-family:var(--font-mono)">
+        <div class="ql-total" id="custAmt_${i}">${fmt(amt)}</div>
         <button class="btn-icon" onclick="removeCustLine(${i})">✕</button>
       </div>`;
     }).join('');
@@ -14617,10 +14632,31 @@ function addCustomLine() {
   saveAll(); renderQuotationLines();
 }
 
+function addCustomHeading() {
+  const q = getQuote(); if (!q) return;
+  q.customLines = q.customLines || [];
+  q.customLines.push({ kind:'heading', desc:'' });
+  saveAll(); renderQuotationLines();
+}
+
 function updateCustLine(i, field, val) {
   const q = getQuote(); if (!q) return;
-  q.customLines[i][field] = field==='qty'||field==='price' ? parseFloat(val)||0 : val;
-  saveAll(); renderQuotationLines();
+  const l = q.customLines[i]; if (!l) return;
+  l[field] = field==='qty'||field==='price' ? parseFloat(val)||0 : val;
+  saveAll(); // coalesced server-side save (_sqlSaving/_savePending) — safe per keystroke
+  // Patch figures in place — rebuilding the rows here destroys the focused
+  // input and the user can only type one character at a time (focus-kill bug,
+  // same class as the bulk-import fix of 2026-08-04).
+  if (field === 'qty' || field === 'price') {
+    const amtEl = document.getElementById('custAmt_' + i);
+    if (amtEl) amtEl.textContent = fmt((parseFloat(l.qty)||1) * (parseFloat(l.price)||0));
+  }
+  let sub = 0;
+  (q.customLines||[]).forEach(cl => {
+    if (cl.kind === 'heading') return;
+    sub += (parseFloat(cl.qty)||1) * (parseFloat(cl.price)||0);
+  });
+  updateQuotationTotals(sub);
 }
 
 function removeCustLine(i) {
@@ -19731,6 +19767,10 @@ function generateQuotePDF(mode = 'quote', returnHtml = false) {
       if (computed.total && Math.abs(computed.total - grandTotal) > 2) grandTotal = computed.total;
     } else if (q.type === 'custom') {
       (q.customLines||[]).forEach(l => {
+        if (l.kind === 'heading') {
+          lineRows += `<tr><td colspan="4" style="padding:10px 10px 5px;border-bottom:2px solid #333;font-weight:700;font-size:12px">${escHtml(l.desc||'')}</td></tr>`;
+          return;
+        }
         const price = parseFloat(l.price)||0, qty = parseFloat(l.qty)||1;
         const amt = Math.round(qty*price*100)/100;
         grandTotal += amt;
@@ -20258,6 +20298,7 @@ function drawClientQuotePDF(JsPDFCtor, q, logoDataUri) {
     if (computed.total && Math.abs(computed.total - grandTotal) > 2) grandTotal = computed.total;
   } else if (q.type === 'custom') {
     (q.customLines || []).forEach(l => {
+      if (l.kind === 'heading') { lines.push({ heading: true, desc: l.desc || '' }); return; }
       const price = parseFloat(l.price) || 0, qty = parseFloat(l.qty) || 1;
       const amt = Math.round(qty * price * 100) / 100;
       grandTotal += amt;
@@ -20271,6 +20312,17 @@ function drawClientQuotePDF(JsPDFCtor, q, logoDataUri) {
 
   setD(RULE); doc.setLineWidth(0.2);
   lines.forEach(l => {
+    if (l.heading) {
+      // Section heading spanning the full row — bold, no figures
+      const hW = doc.splitTextToSize(String(l.desc || ''), usableW - 6);
+      const hH = Math.max(8, hW.length * 4.2 + 4);
+      if (ensure(hH + 2)) lineHead();
+      setT(TEXT); doc.setFont('helvetica', 'bold'); doc.setFontSize(9.5);
+      hW.forEach((dl, i) => doc.text(dl, mL + 3, y + 5.6 + i * 4.2));
+      y += hH;
+      doc.setLineWidth(0.4); doc.line(mL, y, pageW - mR, y); doc.setLineWidth(0.2);
+      return;
+    }
     const descW = doc.splitTextToSize(String(l.desc || ''), cDesc - 4);
     const rowH = Math.max(7, descW.length * 4 + 3.2);
     if (ensure(rowH + 2)) lineHead();
@@ -22016,7 +22068,7 @@ const HELP_CONTENT = {
         <div class="h-faq"><div class="h-q">The total here doesn't match Calcs</div>
         <div class="h-a">Calcs shows pre-margin subtotal + margin separately. Quotation shows the final sell price. They should match when margin is applied — check the margin slider.</div></div>
         <div class="h-faq"><div class="h-q">Can I use fully custom line items?</div>
-        <div class="h-a">Yes — change quote type to Custom. You can then add/remove/rename lines freely. Useful for BoQ-style quotes.</div></div>
+        <div class="h-a">Yes — change quote type to Custom. You can then add/remove/rename lines freely. Useful for BoQ-style quotes. Each line shows a live Amount (qty × rate). Use <b>+ Add Heading</b> to insert section headings between lines (e.g. "Level 1 — Balcony Balustrades", "Level 2 — Terrace") — headings carry no value, don't affect totals, and print as bold section dividers on the quote PDF.</div></div>
       </div>`
   },
 
