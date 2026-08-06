@@ -6878,9 +6878,13 @@ function computeQuoteTotals(quote, ratesObj) {
     if (fin === 'primer') finishQty.primer_t += kg / 1000;
   });
 
-  // Fittings (computed on fittingsBaseKg — staircase weight excluded)
-  const fittingsPct  = parseFloat(quote.fittingsPct)  || 10;
-  const fittingsRate = parseFloat(quote.fittingsRate) || 1.30;
+  // Fittings (computed on fittingsBaseKg — staircase weight excluded).
+  // 0% is a legitimate value (plates already in the takeoff) — nullish
+  // checks, not ||, so an entered 0 isn't coerced back to the default.
+  const _fpRaw = parseFloat(quote.fittingsPct);
+  const fittingsPct  = isFinite(_fpRaw) ? _fpRaw : 10;
+  const _frRaw = parseFloat(quote.fittingsRate);
+  const fittingsRate = isFinite(_frRaw) ? _frRaw : 1.30;
   const fittingsKg   = fittingsBaseKg * (fittingsPct / 100);
   const fittingsCostVal = fittingsKg * fittingsRate;
   const miscMaterial    = parseFloat(quote.miscMaterial) || 0;
@@ -7664,8 +7668,8 @@ function autosave() {
   q.projectTCs = document.getElementById('hProjectTCs')?.value || '';
   q.boqRef     = document.getElementById('hBoqRef')?.value || '';
   q.qScope     = document.getElementById('qScope')?.value || '';
-  q.fittingsPct  = parseFloat(document.getElementById('fittingsPct')?.value) || 10;
-  q.fittingsRate = parseFloat(document.getElementById('fittingsRate')?.value) || 1.30;
+  q.fittingsPct  = (v => isFinite(v) ? v : 10)(parseFloat(document.getElementById('fittingsPct')?.value));
+  q.fittingsRate = (v => isFinite(v) ? v : 1.30)(parseFloat(document.getElementById('fittingsRate')?.value));
   q.miscMaterial = parseFloat(document.getElementById('miscMaterialVal')?.value) || 0;
   q.miscMaterialNote = document.getElementById('miscMaterialNote')?.value || '';
   q.fixingsPct = parseFloat(document.getElementById('fixingsPctInput')?.value) || 0;
@@ -8389,8 +8393,8 @@ function loadQuoteEditor() {
   document.getElementById('hBoqRef').value     = q.boqRef || '';
   document.getElementById('qScope').value      = q.qScope || '';
   document.getElementById('statusSelect').value = q.status;
-  document.getElementById('fittingsPct').value   = q.fittingsPct || 10;
-  document.getElementById('fittingsRate').value  = q.fittingsRate || 1.30;
+  document.getElementById('fittingsPct').value   = (q.fittingsPct  != null && isFinite(q.fittingsPct))  ? q.fittingsPct  : 10;
+  document.getElementById('fittingsRate').value  = (q.fittingsRate != null && isFinite(q.fittingsRate)) ? q.fittingsRate : 1.30;
   document.getElementById('miscMaterialVal').value = q.miscMaterial || 0;
   document.getElementById('miscMaterialNote').value = q.miscMaterialNote || '';
   const fixInp = document.getElementById('fixingsPctInput');
@@ -14207,8 +14211,8 @@ function recalcAll() {
   q.purlinM       = parseFloat(document.getElementById('purlins-m')?.value)       || 0;
   q.purlinRate    = parseFloat(document.getElementById('purlins-rate')?.value)    || 0;
   q.margin        = parseFloat(document.getElementById('marginSlider')?.value)    || 20;
-  q.fittingsPct   = parseFloat(document.getElementById('fittingsPct')?.value)  || 10;
-  q.fittingsRate  = parseFloat(document.getElementById('fittingsRate')?.value)    || 1.30;
+  q.fittingsPct   = (v => isFinite(v) ? v : 10)(parseFloat(document.getElementById('fittingsPct')?.value));
+  q.fittingsRate  = (v => isFinite(v) ? v : 1.30)(parseFloat(document.getElementById('fittingsRate')?.value));
   q.miscMaterial  = parseFloat(document.getElementById('miscMaterialVal')?.value) || 0;
   q.globalDays    = document.getElementById('globalDaysToggle')?.checked !== false;
   q.instDays      = parseFloat(document.getElementById('inst-days')?.value)       || 0;
@@ -19719,7 +19723,7 @@ function buildClientTakeoffHtml(q) {
     rows.forEach(r => { tkRows += rowHtml(r); });
   }
 
-  const fittingsPct = parseFloat(q.fittingsPct) || 10;
+  const fittingsPct = isFinite(parseFloat(q.fittingsPct)) ? parseFloat(q.fittingsPct) : 10;
   const fittingsKg  = totalKgSum * (fittingsPct / 100);
   const grandKg     = totalKgSum + fittingsKg;
   const membersStr  = totalKgSum > 0 ? totalKgSum.toFixed(1) + ' kg' : '—';
@@ -20107,7 +20111,7 @@ function generateQuotePDF(mode = 'quote', returnHtml = false) {
             <td style="padding:6px 10px;text-align:right;font-size:10px;color:#555;font-variant-numeric:tabular-nums">${fmtGBP(tkTotalCost)}</td>
           </tr>
           ${computed.fittingsKg > 0 ? `<tr style="background:#f5f5f5">
-            <td colspan="3" style="padding:6px 10px;font-size:10px;color:#555">Fittings &amp; Connections (${parseFloat(q.fittingsPct)||10}% of members)</td>
+            <td colspan="3" style="padding:6px 10px;font-size:10px;color:#555">Fittings &amp; Connections (${isFinite(parseFloat(q.fittingsPct)) ? parseFloat(q.fittingsPct) : 10}% of members)</td>
             <td style="padding:6px 10px;text-align:right;font-size:10px;color:#555;font-variant-numeric:tabular-nums">${(computed.fittingsKg||0).toFixed(1)} kg</td>
             <td style="padding:6px 10px;text-align:right;font-size:10px;color:#555;font-variant-numeric:tabular-nums">${fmtGBP(computed.fittingsCostVal||0)}</td>
           </tr>` : ''}
@@ -20489,7 +20493,7 @@ function drawClientQuotePDF(JsPDFCtor, q, logoDataUri) {
       tkRows.forEach(drawSchedRow);
     }
 
-    const fittingsPct = parseFloat(q.fittingsPct) || 10;
+    const fittingsPct = isFinite(parseFloat(q.fittingsPct)) ? parseFloat(q.fittingsPct) : 10;
     const fittingsKg = totalKgSum * (fittingsPct / 100);
     const footRows = [];
     if (totalKgSum > 0) footRows.push(['Structural Members subtotal', totalKgSum.toFixed(1) + ' kg', false]);
