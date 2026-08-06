@@ -152,8 +152,10 @@ body { background: var(--bg); color: var(--text); font-family: var(--font-body);
 /* ── QUOTATION TAB ── */
 .quotation-line { display: grid; gap: 8px; align-items: center; padding: 6px 0; border-bottom: 1px solid var(--border); }
 .quotation-line-standard { grid-template-columns: 2fr 80px 100px 90px; }
-.quotation-line-custom { grid-template-columns: 2fr 60px 50px 85px 90px 28px; }
-.quotation-line-heading { grid-template-columns: 1fr 28px; border-bottom: 2px solid var(--accent); background: rgba(255,255,255,0.02); }
+.quotation-line-custom { grid-template-columns: 24px 2fr 60px 50px 85px 90px 28px; }
+.quotation-line-heading { grid-template-columns: 24px 1fr 28px; border-bottom: 2px solid var(--accent); background: rgba(255,255,255,0.02); }
+.quotation-line.drag-over { border-top: 2px solid var(--accent); background: rgba(255,107,0,0.10); }
+.quotation-line.drag-dragging { opacity: 0.35; }
 .ql-heading-input { font-weight: 700; font-size: 13px; background: transparent !important; border-color: transparent !important; }
 .ql-heading-input:focus { border-color: var(--accent) !important; }
 .ql-label { font-size: 13px; color: var(--text); }
@@ -1395,7 +1397,8 @@ tr.drag-dragging { opacity:0.35; }
             <div style="font-size:11px;color:var(--muted);font-weight:600;text-align:right">AMOUNT</div>
           </div>
           <!-- custom mode header -->
-          <div id="quotationCustomHeader" style="display:none;grid-template-columns:2fr 60px 50px 85px 90px 28px;gap:8px;padding:6px 0;border-bottom:2px solid var(--accent);margin-bottom:4px">
+          <div id="quotationCustomHeader" style="display:none;grid-template-columns:24px 2fr 60px 50px 85px 90px 28px;gap:8px;padding:6px 0;border-bottom:2px solid var(--accent);margin-bottom:4px">
+            <div></div>
             <div style="font-size:11px;color:var(--muted);font-weight:600">DESCRIPTION</div>
             <div style="font-size:11px;color:var(--muted);font-weight:600;text-align:right">QTY</div>
             <div style="font-size:11px;color:var(--muted);font-weight:600;text-align:center">UNIT</div>
@@ -14552,17 +14555,22 @@ function renderQuotationLines() {
 
   } else if (q.type === 'custom') {
     let sub = 0;
+    const dragAttrs = i => `id="ql-row-${i}" draggable="true"
+      ondragstart="onQlDragStart(event,${i})" ondragover="onQlDragOver(event,${i})"
+      ondragleave="onQlDragLeave(event)" ondrop="onQlDrop(event,${i})" ondragend="onQlDragEnd()"`;
     cont.innerHTML = (q.customLines||[]).map((l,i) => {
       if (l.kind === 'heading') {
         // Section/area heading (e.g. "Level 1 — Balcony Balustrades") — no figures, excluded from totals
-        return `<div class="quotation-line quotation-line-heading">
+        return `<div class="quotation-line quotation-line-heading" ${dragAttrs(i)}>
+          <span class="drag-handle" title="Drag to reorder">⠿</span>
           <input class="ql-input ql-heading-input" value="${escHtml(l.desc||'')}" placeholder="Section heading, e.g. Level 1 — Balcony Balustrades" oninput="updateCustLine(${i},'desc',this.value)">
           <button class="btn-icon" onclick="removeCustLine(${i})">✕</button>
         </div>`;
       }
       const amt = (parseFloat(l.qty)||1) * (parseFloat(l.price)||0);
       sub += amt;
-      return `<div class="quotation-line quotation-line-custom">
+      return `<div class="quotation-line quotation-line-custom" ${dragAttrs(i)}>
+        <span class="drag-handle" title="Drag to reorder">⠿</span>
         <input class="ql-input" value="${escHtml(l.desc||'')}" placeholder="Description..." oninput="updateCustLine(${i},'desc',this.value)" style="background:transparent;border-color:transparent">
         <input class="ql-input" type="number" value="${l.qty||1}" oninput="updateCustLine(${i},'qty',this.value)" style="text-align:right">
         <input class="ql-input" value="${escHtml(l.unit||'m')}" oninput="updateCustLine(${i},'unit',this.value)" style="text-align:center">
@@ -14662,6 +14670,63 @@ function updateCustLine(i, field, val) {
 function removeCustLine(i) {
   const q = getQuote(); if (!q) return;
   q.customLines.splice(i,1); saveAll(); renderQuotationLines();
+}
+
+// ── Custom quotation line drag-reorder (mirrors takeoff grid pattern) ──
+// Separate state from the takeoff drag (_dragIndices) so the two grids
+// can never interfere. Single-row drag; drop inserts BEFORE the target row
+// (drag-over highlight shows a top border, same semantics as takeoff).
+let _qlDragIdx = null, _qlDragOverIdx = null, _qlGhostEl = null;
+
+function onQlDragStart(event, idx) {
+  _qlDragIdx = idx;
+  document.getElementById(`ql-row-${idx}`)?.classList.add('drag-dragging');
+  const q = getQuote();
+  const l = q?.customLines?.[idx];
+  _qlGhostEl = document.createElement('div');
+  _qlGhostEl.className = 'drag-ghost';
+  const label = (l?.desc || (l?.kind === 'heading' ? 'Heading' : 'Line'));
+  _qlGhostEl.textContent = `⠿ ${label.length > 40 ? label.slice(0,40)+'…' : label}`;
+  document.body.appendChild(_qlGhostEl);
+  event.dataTransfer.setDragImage(_qlGhostEl, 0, 0);
+  event.dataTransfer.effectAllowed = 'move';
+  event.dataTransfer.setData('text/plain', String(idx));
+}
+
+function onQlDragOver(event, idx) {
+  if (_qlDragIdx === null) return;
+  event.preventDefault();
+  event.dataTransfer.dropEffect = 'move';
+  if (_qlDragOverIdx !== idx) {
+    if (_qlDragOverIdx !== null) document.getElementById(`ql-row-${_qlDragOverIdx}`)?.classList.remove('drag-over');
+    _qlDragOverIdx = idx;
+    if (idx !== _qlDragIdx) document.getElementById(`ql-row-${idx}`)?.classList.add('drag-over');
+  }
+}
+
+function onQlDragLeave(event) {
+  if (_qlDragOverIdx !== null) {
+    document.getElementById(`ql-row-${_qlDragOverIdx}`)?.classList.remove('drag-over');
+    _qlDragOverIdx = null;
+  }
+}
+
+function onQlDrop(event, targetIdx) {
+  event.preventDefault();
+  if (_qlDragIdx === null || _qlDragIdx === targetIdx) { onQlDragEnd(); return; }
+  const q = getQuote(); if (!q || !Array.isArray(q.customLines)) { onQlDragEnd(); return; }
+  const [moved] = q.customLines.splice(_qlDragIdx, 1);
+  const insertAt = _qlDragIdx < targetIdx ? targetIdx - 1 : targetIdx;
+  q.customLines.splice(insertAt, 0, moved);
+  onQlDragEnd();
+  saveAll(); renderQuotationLines();
+}
+
+function onQlDragEnd() {
+  document.querySelectorAll('#quotationLines .drag-dragging, #quotationLines .drag-over')
+    .forEach(el => el.classList.remove('drag-dragging', 'drag-over'));
+  if (_qlGhostEl) { _qlGhostEl.remove(); _qlGhostEl = null; }
+  _qlDragIdx = null; _qlDragOverIdx = null;
 }
 
 // ============================================================
@@ -22068,7 +22133,7 @@ const HELP_CONTENT = {
         <div class="h-faq"><div class="h-q">The total here doesn't match Calcs</div>
         <div class="h-a">Calcs shows pre-margin subtotal + margin separately. Quotation shows the final sell price. They should match when margin is applied — check the margin slider.</div></div>
         <div class="h-faq"><div class="h-q">Can I use fully custom line items?</div>
-        <div class="h-a">Yes — change quote type to Custom. You can then add/remove/rename lines freely. Useful for BoQ-style quotes. Each line shows a live Amount (qty × rate). Use <b>+ Add Heading</b> to insert section headings between lines (e.g. "Level 1 — Balcony Balustrades", "Level 2 — Terrace") — headings carry no value, don't affect totals, and print as bold section dividers on the quote PDF.</div></div>
+        <div class="h-a">Yes — change quote type to Custom. You can then add/remove/rename lines freely. Useful for BoQ-style quotes. Each line shows a live Amount (qty × rate). Use <b>+ Add Heading</b> to insert section headings between lines (e.g. "Level 1 — Balcony Balustrades", "Level 2 — Terrace") — headings carry no value, don't affect totals, and print as bold section dividers on the quote PDF. Drag the ⠿ handle to reorder any line or heading — dropping inserts it above the highlighted row, same as the takeoff grid.</div></div>
       </div>`
   },
 
