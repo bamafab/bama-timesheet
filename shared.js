@@ -38683,7 +38683,7 @@ function renderInvSalesTable() {
 }
 
 let _invSupplierSearchTerm = '';
-let _invSupChip = 'all';   // all | unmatched | unpaid | overdue | paid | dd
+let _invSupChip = 'all';   // all | unmatched | unpaid | overdue | paid | dd | cn
 let _invSupSortKey = null;  // supplier | po | invref | project | invdate | due | gross | recon | paid
 let _invSupSortDir = 1;     // 1 = asc (a→z), -1 = desc (z→a)
 
@@ -38724,7 +38724,7 @@ function _invSupUpdateSortArrows() {
 
 function invSupSetChip(chip) {
   _invSupChip = chip;
-  ['all','unmatched','unpaid','overdue','paid','dd'].forEach(c => {
+  ['all','unmatched','unpaid','overdue','paid','dd','cn'].forEach(c => {
     const el = document.getElementById('invSupChip-' + c);
     if (el) el.classList.toggle('active', c === chip);
   });
@@ -38738,6 +38738,7 @@ function _invSupplierFiltered() {
   else if (_invSupChip === 'overdue') list = list.filter(i => _invSupIsOverdue(i));
   else if (_invSupChip === 'paid')    list = list.filter(i => i.paid_at);
   else if (_invSupChip === 'dd')      list = list.filter(i => i.is_dd);
+  else if (_invSupChip === 'cn')      list = list.filter(i => Number(i.gross) < 0);
   const term = (_invSupplierSearchTerm || '').toLowerCase().trim();
   if (term) {
     list = list.filter(inv =>
@@ -38798,8 +38799,27 @@ function renderInvSupplierTable() {
     return;
   }
   const fmt2 = v => Number(v || 0).toLocaleString('en-GB', { minimumFractionDigits: 2 });
-  tbody.innerHTML = list.map(inv => {
+  // Credit-note register strip — visible when the CN chip is active
+  let cnStrip = '';
+  if (_invSupChip === 'cn') {
+    const tot  = list.reduce((s, i) => s + Math.abs(Number(i.gross) || 0), 0);
+    const out  = list.filter(i => !i.paid_at);
+    const outV = out.reduce((s, i) => s + Math.abs(Number(i.gross) || 0), 0);
+    const unlinked = list.filter(i => !i.credits_invoice_id).length;
+    cnStrip = `<tr><td colspan="11" style="padding:8px 12px;background:rgba(239,68,68,.06);border-bottom:1px solid var(--border);font-size:12px">
+      <strong>${list.length}</strong> credit note${list.length === 1 ? '' : 's'} · £${fmt2(tot)} total
+      · <span style="color:#fbbf24;font-weight:600">£${fmt2(outV)} outstanding (${out.length})</span>
+      · <span style="color:var(--green);font-weight:600">£${fmt2(tot - outV)} settled</span>
+      ${unlinked ? ` · <span style="color:#fbbf24">${unlinked} not linked to an invoice</span>` : ''}
+    </td></tr>`;
+  }
+  tbody.innerHTML = cnStrip + list.map(inv => {
     const overdue = _invSupIsOverdue(inv);
+    const isCN = Number(inv.gross) < 0;
+    const cnOrig = (isCN && inv.credits_invoice_id) ? _invSupInvoices.find(x => x.id === inv.credits_invoice_id) : null;
+    const cnSub = !isCN ? '' : (cnOrig || inv.credits_invoice_id
+      ? `<div style="font-size:10px;color:var(--muted)">credits ${escapeHtml((cnOrig && cnOrig.invoice_ref) || ('#' + inv.credits_invoice_id))} <a href="javascript:void(0)" onclick="invCnLink(${inv.id})" title="Change linked invoice" style="text-decoration:none">✏️</a></div>`
+      : `<div style="font-size:10px"><a href="javascript:void(0)" onclick="invCnLink(${inv.id})" style="color:#fbbf24;text-decoration:none" title="Which invoice does this credit note relate to?">⚠ not linked — link to invoice</a></div>`);
     const allocs = Array.isArray(inv.allocations) ? inv.allocations : [];
     const poCell = allocs.length > 1
       ? `<span style="font-family:var(--font-mono);font-weight:600" title="${escapeHtml(allocs.map(a => `${a.po_reference || ('#' + a.po_id)} £${Number(a.net != null ? a.net : a.gross).toFixed(2)}`).join(' · '))}">${escapeHtml(allocs[0].po_reference || ('#' + allocs[0].po_id))} <span style="display:inline-block;padding:1px 6px;border-radius:8px;font-size:10px;font-weight:700;background:rgba(96,165,250,.15);color:#60a5fa">🔀 +${allocs.length - 1}</span></span>`
@@ -38819,19 +38839,22 @@ function renderInvSupplierTable() {
         `<input type="checkbox" ${_invRemitSelected.has(inv.id) ? 'checked' : ''}
                 onchange="invRemitToggle(${inv.id}, this.checked)" title="Select">`}</td>
       <td>${escapeHtml(inv.supplier_name || '')}${inv.invoice_type === 'subcontractor' ? ' <span style="display:inline-block;padding:1px 6px;border-radius:8px;font-size:10px;font-weight:600;background:rgba(147,112,219,.18);color:#b596e8" title="Subcontractor — CIS deduction £' + Number(inv.cis_deduction || 0).toFixed(2) + '">CIS</span>' : ''}</td>
-      <td>${escapeHtml(inv.invoice_ref || '')}${Number(inv.gross) < 0 ? ` <span style="display:inline-block;padding:1px 6px;border-radius:8px;font-size:10px;font-weight:700;background:rgba(239,68,68,.18);color:#f87171" title="Credit note${inv.credits_invoice_id ? ' — credits invoice ' + ((_invSupInvoices.find(x => x.id === inv.credits_invoice_id) || {}).invoice_ref || ('#' + inv.credits_invoice_id)) : ''}">CN</span>` : ''}${fileLink}</td>
+      <td>${escapeHtml(inv.invoice_ref || '')}${isCN ? ` <span style="display:inline-block;padding:1px 6px;border-radius:8px;font-size:10px;font-weight:700;background:rgba(239,68,68,.18);color:#f87171" title="Credit note">CN</span>` : ''}${fileLink}${cnSub}</td>
       <td>${poCell}</td>
       <td>${escapeHtml(inv.job_number || inv.cost_centre || '')}${inv.babcock_quote_ref ? ` <span style="font-size:10px;color:var(--muted);font-family:var(--font-mono)">${escapeHtml(inv.babcock_quote_ref)}</span>` : ''}</td>
       <td>${_invSupFmtDate(inv.invoice_date)}</td>
       <td>${dueCell}</td>
       <td style="text-align:right;${Number(inv.gross) < 0 ? 'color:#f87171;font-weight:600' : ''}">£${fmt2(inv.gross)}</td>
       <td>${inv.po_id ? invStatusBadge(_invPoRecon(inv)) : ''}</td>
-      <td>${inv.paid_at ? `<span style="color:var(--green);font-weight:600" title="${escapeHtml(inv.paid_ref || '')}">✓ Paid</span>
-        <div style="font-size:10px;color:var(--muted)">${_invSupFmtDate(inv.paid_at)}${inv.run_ref ? ' · ' + escapeHtml(inv.run_ref) : ''}</div>` : ''}</td>
+      <td>${inv.paid_at ? `<span style="color:var(--green);font-weight:600" title="${escapeHtml(inv.paid_ref || '')}">✓ ${isCN ? 'Settled' : 'Paid'}</span>
+        <div style="font-size:10px;color:var(--muted)">${_invSupFmtDate(inv.paid_at)}${inv.run_ref ? ' · ' + escapeHtml(inv.run_ref) : (inv.paid_ref ? ' · ' + escapeHtml(inv.paid_ref) : '')}</div>` :
+        (isCN ? '<span style="font-size:11px;color:#fbbf24;font-weight:600" title="Credit not yet refunded or offset against a payment">⏳ outstanding</span>' : '')}</td>
       <td style="text-align:center;white-space:nowrap">${inv.paid_at ?
         `<button class="btn btn-ghost" style="padding:2px 6px;font-size:11px" title="Undo payment — mark unpaid"
                  onclick="undoSupInvoicePaid(${inv.id})">↩</button>` :
-        `<button class="btn btn-ghost" style="padding:2px 6px;font-size:11px"
+        `${isCN ? `<button class="btn btn-ghost" style="padding:2px 6px;font-size:11px;color:var(--green)"
+                 title="Mark settled — credit refunded to the bank (offsets in a payment run settle automatically)"
+                 onclick="invCnMarkSettled(${inv.id})">✓</button>` : ''}<button class="btn btn-ghost" style="padding:2px 6px;font-size:11px"
                  title="Amend invoice" onclick="openSupAddInvoiceModal(${inv.id})">✏️</button>
          <button class="btn btn-ghost" style="padding:2px 6px;font-size:11px;color:var(--red)"
                  title="Delete invoice" onclick="deleteSupInvoice(${inv.id})">🗑</button>`}</td>
@@ -38849,6 +38872,69 @@ function _invPoRecon(inv) {
   if (Math.abs(sum - poTotal) <= 1.00) return 'matched';
   if (sum > poTotal + 1.00) return 'discrepancy';
   return 'unmatched';
+}
+
+// ── Credit-note register (CN chip in the supplier ledger) ──────────────────
+// A CN is any negative-gross row. "Settled" = paid_at set: payment runs set
+// it automatically when the CN nets off a run; a cash refund from the
+// supplier is marked manually via invCnMarkSettled. invCnLink stores/edits
+// credits_invoice_id so every CN can be justified against its invoice.
+
+async function invCnLink(id) {
+  const inv = _invSupInvoices.find(i => i.id === id);
+  if (!inv) return;
+  const candidates = _invSupInvoices
+    .filter(x => x.id !== id && String(x.supplier_id) === String(inv.supplier_id) && Number(x.gross) >= 0)
+    .sort((a, b) => new Date(b.invoice_date || 0) - new Date(a.invoice_date || 0));
+  if (!candidates.length) {
+    toast('No invoices from this supplier in the ledger yet — import the original invoice first.', 'info');
+    return;
+  }
+  const opts = candidates.map(x =>
+    `<option value="${x.id}"${Number(inv.credits_invoice_id) === x.id ? ' selected' : ''}>${escapeHtml(x.invoice_ref || ('#' + x.id))} · ${_invSupFmtDate(x.invoice_date)} · £${Number(x.gross || 0).toFixed(2)}</option>`).join('');
+  const ok = await bamaConfirm({
+    title: 'Link credit note to invoice',
+    body: `<div style="font-size:12px;line-height:1.5;margin-bottom:10px">${escapeHtml(inv.invoice_ref || ('#' + id))} · ${escapeHtml(inv.supplier_name || '')} · <strong style="color:#f87171">£${Math.abs(Number(inv.gross || 0)).toFixed(2)} credit</strong> — which invoice does it relate to?</div>
+      <select id="cnLinkSel" style="width:100%;padding:7px 8px;background:var(--card);color:var(--text);border:1px solid var(--border);border-radius:6px;font-size:12px">${opts}</select>`,
+    confirmText: 'Link', icon: '&#128279;'
+  });
+  if (!ok) return;
+  const sel = parseInt(document.getElementById('cnLinkSel')?.value);
+  if (!sel) return;
+  setLoading(true);
+  try {
+    await api.put(`/api/supplier-invoices/${id}`, { credits_invoice_id: sel });
+    toast('Credit note linked ✓', 'success');
+    await loadInvoicingData();
+  } catch (e) {
+    toast('Link failed — ' + e.message, 'error');
+  } finally { setLoading(false); }
+}
+
+async function invCnMarkSettled(id) {
+  const inv = _invSupInvoices.find(i => i.id === id);
+  if (!inv) return;
+  const ok = await bamaConfirm({
+    title: 'Mark credit note settled',
+    body: `<div style="font-size:12px;line-height:1.5;margin-bottom:10px">${escapeHtml(inv.invoice_ref || ('#' + id))} · ${escapeHtml(inv.supplier_name || '')} · <strong style="color:#f87171">£${Math.abs(Number(inv.gross || 0)).toFixed(2)} credit</strong><br>
+      <span style="color:var(--muted)">Use this when the supplier has refunded the money to the bank. Credits offset against a payment run are settled by the run automatically.</span></div>
+      <label style="display:block;font-size:11px;color:var(--muted);margin-bottom:3px">Settled date</label>
+      <input type="date" id="cnSettleDate" value="${new Date().toISOString().slice(0, 10)}" style="width:100%;padding:7px 8px;background:var(--card);color:var(--text);border:1px solid var(--border);border-radius:6px;font-size:12px;margin-bottom:8px">
+      <label style="display:block;font-size:11px;color:var(--muted);margin-bottom:3px">Reference — how it came back</label>
+      <input type="text" id="cnSettleRef" placeholder="e.g. BACS refund 12/08 · seen on statement" style="width:100%;padding:7px 8px;background:var(--card);color:var(--text);border:1px solid var(--border);border-radius:6px;font-size:12px">`,
+    confirmText: 'Mark Settled', icon: '&#9989;'
+  });
+  if (!ok) return;
+  const date = document.getElementById('cnSettleDate')?.value || new Date().toISOString().slice(0, 10);
+  const ref  = (document.getElementById('cnSettleRef')?.value || '').trim() || 'refund received';
+  setLoading(true);
+  try {
+    await api.put(`/api/supplier-invoices/${id}`, { paid_at: date, paid_ref: ref });
+    toast('Credit note marked settled ✓', 'success');
+    await loadInvoicingData();
+  } catch (e) {
+    toast('Failed — ' + e.message, 'error');
+  } finally { setLoading(false); }
 }
 
 async function undoSupInvoicePaid(id) {
