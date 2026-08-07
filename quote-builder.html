@@ -3818,10 +3818,22 @@ tr.drag-dragging { opacity:0.35; }
       <div id="settingsPaint"></div>
     </div>
 
-    <div class="rd-section" style="margin-bottom:0">
+    <div class="rd-section">
       <div class="rd-head">📐 Design <span class="rd-count" id="count-design"></span></div>
       <div class="rd-sub">£ per hour</div>
       <div id="settingsDesign"></div>
+    </div>
+
+    <div class="rd-section">
+      <div class="rd-head">🪜 Staircases &amp; Spirals <span class="rd-count" id="count-staircase"></span></div>
+      <div class="rd-sub">hrs / £ presets used by the staircase &amp; spiral wizards</div>
+      <div id="settingsStaircase"></div>
+    </div>
+
+    <div class="rd-section" style="margin-bottom:0">
+      <div class="rd-head">🛡 Balustrades &amp; Handrails <span class="rd-count" id="count-balustrade"></span></div>
+      <div class="rd-sub">rates &amp; multipliers used by the balustrade wizard — per-family £/m band tables are edited in the wizard's Adjust panel</div>
+      <div id="settingsBalustrade"></div>
     </div>
 
   </div>
@@ -9734,7 +9746,7 @@ function spReadInputs(){
     treadCostMode: _spv('spTreadCostMode')||'weight',
     treadFixedPrice: Number(_spv('spTreadFixedPrice'))||0,
     treadType: _spv('spTreadType')||'stiffened',
-    treadMaterialRate: (function(){ const v=_spv('spTreadMaterialRate'); return v!=='' && !isNaN(Number(v)) ? Number(v) : ((DEFAULT_RATES.staircase&&DEFAULT_RATES.staircase.sp_tread_material_rate&&DEFAULT_RATES.staircase.sp_tread_material_rate.rate)||4.0); })(),
+    treadMaterialRate: (function(){ const v=_spv('spTreadMaterialRate'); return v!=='' && !isNaN(Number(v)) ? Number(v) : ((rates.staircase&&rates.staircase.sp_tread_material_rate&&rates.staircase.sp_tread_material_rate.rate)||4.0); })(),
     treadPlateMM: Number(_spv('spTreadPlate'))||6,
     treadFoldMM: Number(_spv('spTreadFold'))||30,
     stiffenerCount: Number(_spv('spStiffenerCount'))||0,
@@ -12744,7 +12756,11 @@ function rowHTML(id, label, qty, rate, result, extraAttrs='') {
 
 function removeDynRow(id) {
   const q = getQuote(); if (!q) return;
-  ['labourRows','plantRows','paintRows','deliveryRows','prelimRows'].forEach(arr => {
+  // EVERY array whose rows render through rowHTML() must be listed here —
+  // consumableRows and surveyVisitRows were missing (2026-08-07), so their ✕
+  // removed the DOM node but the data survived and the row resurrected on the
+  // next render/save.
+  ['labourRows','plantRows','paintRows','deliveryRows','prelimRows','consumableRows','surveyVisitRows'].forEach(arr => {
     q[arr] = (q[arr]||[]).filter(r=>r.id!==id);
   });
   document.getElementById('dynrow-'+id)?.remove();
@@ -15357,7 +15373,7 @@ function openWizard(q) {
   // Show design complexity panel (fab_pack_only is default active)
   const complex = document.getElementById('wiz-design-complexity');
   if (complex) complex.style.display = '';
-  dwizCalc();
+  dwizCalc(complex);
   document.getElementById('wizardModal').classList.add('active');
 }
 
@@ -15648,7 +15664,7 @@ function wizSelectDesign(el) {
   const needsDrawings = ['fab_pack_only','full_design','client_design','design_check'].includes(el.dataset.design);
   const complex = document.getElementById('wiz-design-complexity');
   if (complex) complex.style.display = needsDrawings ? '' : 'none';
-  if (needsDrawings) dwizCalc();
+  if (needsDrawings) dwizCalc(complex);
 }
 
 function wizSelectDelivery(el) {
@@ -15995,7 +16011,8 @@ function applyWizard() {
   // ── Design ────────────────────────────────────────────────
   const designChoice = document.querySelector('#wiz-design-tiles .wiz-tile.active')?.dataset.design || 'fab_pack_only';
   // Use dwiz midpoint for draughtsman hours (calibrated formula)
-  const dwizMid = parseInt((document.getElementById('wiz-design-complexity') || document.getElementById('design-wizard-panel'))?.dataset.mid || '0') || dwizCalcMid();
+  const _dwizRoot = document.getElementById('wiz-design-complexity');
+  const dwizMid = parseInt(_dwizRoot?.dataset.mid || '0') || dwizCalcMid(_dwizRoot);
   const { structEngHrs, fabpackHrs } = autoDesignHours(q.takeoff); // still use for struct eng + fabpack
   if (designChoice === 'none') {
     q.designHours = 0; q.structEngHrs = 0; q.fabpackHours = 0;
@@ -16370,41 +16387,41 @@ function settingsRateRow(category, key, def) {
 }
 
 function renderSettingsForm() {
+  // Only entries shaped {label, rate:number} render as editable rows.
+  // Complex objects (e.g. balustrade per-family band tables) are skipped here
+  // — those are edited in the balustrade wizard's Adjust panel.
+  const simpleEntries = (cat) =>
+    Object.entries(rates[cat] || {}).filter(([,v]) => v && typeof v.rate === 'number');
   const fill = (id, cat) => {
     const el = document.getElementById(id);
-    if (el && rates[cat]) el.innerHTML = Object.entries(rates[cat]).map(([k,v])=>settingsRateRow(cat,k,v)).join('');
+    if (!el || !rates[cat]) return 0;
+    const entries = simpleEntries(cat);
+    el.innerHTML = entries.map(([k,v])=>settingsRateRow(cat,k,v)).join('');
+    return entries.length;
   };
-  fill('settingsLabour',      'labour');
-  fill('settingsPlant',       'plant');
-  fill('settingsFab',         'fab');
-  fill('settingsMaterial',    'material');
-  fill('settingsDelivery',    'delivery');
-  fill('settingsPrelims',     'prelims');
-  fill('settingsConsumables', 'consumables');
-  fill('settingsSurvey',      'survey');
-  fill('settingsPaint',       'paint');
-  fill('settingsDesign',      'design');
-
-  // Update counts
-  const counts = {
+  const cats = {
     labour:'settingsLabour', plant:'settingsPlant', fab:'settingsFab',
     material:'settingsMaterial', delivery:'settingsDelivery', prelims:'settingsPrelims',
-    consumables:'settingsConsumables', survey:'settingsSurvey', paint:'settingsPaint', design:'settingsDesign'
+    consumables:'settingsConsumables', survey:'settingsSurvey', paint:'settingsPaint',
+    design:'settingsDesign', staircase:'settingsStaircase', balustrade:'settingsBalustrade'
   };
-  Object.entries(counts).forEach(([cat, elId]) => {
+  Object.entries(cats).forEach(([cat, elId]) => {
+    const n = fill(elId, cat);
     const countEl = document.getElementById('count-'+cat);
-    if (countEl && rates[cat]) countEl.textContent = Object.keys(rates[cat]).length + ' items';
+    if (countEl) countEl.textContent = n + ' items';
   });
 }
 
 // toggleSettingsTile removed — rates drawer shows all sections expanded
 
 function saveSettings() {
-  ['labour','plant','fab','material','delivery','prelims','consumables','survey','paint','design'].forEach(cat => {
+  ['labour','plant','fab','material','delivery','prelims','consumables','survey','paint','design','staircase','balustrade'].forEach(cat => {
     if (!rates[cat]) return;
     Object.keys(rates[cat]).forEach(key => {
+      // Only simple {label, rate} rows render an input — band-table family
+      // objects have none, so they can never be clobbered from here.
       const el = document.getElementById(`sr_${cat}_${key}`);
-      if (el) rates[cat][key].rate = parseFloat(el.value) || 0;
+      if (el && typeof rates[cat][key]?.rate === 'number') rates[cat][key].rate = parseFloat(el.value) || 0;
     });
   });
   localStorage.setItem('bama_rates', JSON.stringify(rates));
@@ -16568,7 +16585,7 @@ function openDesignWizard() {
   if (!panel) return;
   panel.style.display = '';
   document.getElementById('btn-design-wizard').style.background = 'rgba(255,107,0,0.15)';
-  dwizCalc();
+  dwizCalc(panel);
   // Scroll into view
   setTimeout(() => panel.scrollIntoView({ behavior:'smooth', block:'nearest' }), 150);
 }
@@ -16580,21 +16597,39 @@ function toggleDesignWizard() {
   panel.style.display = isOpen ? 'none' : '';
   const btn = document.getElementById('btn-design-wizard');
   if (btn) btn.style.background = isOpen ? 'transparent' : 'rgba(255,107,0,0.15)';
-  if (!isOpen) dwizCalc();
+  if (!isOpen) dwizCalc(panel);
 }
 
 function dwizSelect(group, el) {
-  document.querySelectorAll(`#dwiz-${group} .dwiz-tile`).forEach(t => t.classList.remove('active'));
+  // The mini-wizard (Calcs design block) and the main wizard's design step
+  // DUPLICATE the dwiz-* ids — document-level lookups always hit the first
+  // (mini) panel, so main-wizard tile clicks toggled the WRONG panel's tiles
+  // and calcs read stale selections (2026-08-07). Scope to the clicked tile's
+  // own group and panel instead.
+  el.parentElement.querySelectorAll('.dwiz-tile').forEach(t => t.classList.remove('active'));
   el.classList.add('active');
-  dwizCalc();
+  dwizCalc(dwizRootOf(el));
+}
+
+// Resolve which dwiz panel an element belongs to (mini panel or main wizard).
+function dwizRootOf(el) {
+  return el?.closest?.('#design-wizard-panel, #wiz-design-complexity') || null;
+}
+
+// Default panel when none is given: the visible one (mini panel wins if open).
+function dwizDefaultRoot() {
+  const mini = document.getElementById('design-wizard-panel');
+  if (mini && mini.style.display !== 'none') return mini;
+  return document.getElementById('wiz-design-complexity') || mini;
 }
 
 // Returns just the midpoint using current wizard selections (no DOM update)
-function dwizCalcMid() {
-  const conn   = document.querySelector('#dwiz-connections .dwiz-tile.active')?.dataset.val || 'simple';
-  const rep    = document.querySelector('#dwiz-repetition .dwiz-tile.active')?.dataset.val  || 'high';
-  const mat    = document.querySelector('#dwiz-material .dwiz-tile.active')?.dataset.val    || 'steel';
-  const det    = document.querySelector('#dwiz-details .dwiz-tile.active')?.dataset.val     || 'few';
+function dwizCalcMid(root) {
+  root = root || dwizDefaultRoot() || document;
+  const conn   = root.querySelector('#dwiz-connections .dwiz-tile.active')?.dataset.val || 'simple';
+  const rep    = root.querySelector('#dwiz-repetition .dwiz-tile.active')?.dataset.val  || 'high';
+  const mat    = root.querySelector('#dwiz-material .dwiz-tile.active')?.dataset.val    || 'steel';
+  const det    = root.querySelector('#dwiz-details .dwiz-tile.active')?.dataset.val     || 'few';
   const q      = getQuote();
   const tonnes = q ? (q.takeoff||[]).reduce((s,r) => s + (r.length/1000)*(r.kgm||0)*(r.qty||1), 0) / 1000 : 0;
   const baseRate  = { simple:2.5, standard:3.2, moment:4.2, complex:5.0 }[conn];
@@ -16608,15 +16643,17 @@ function dwizCalcMid() {
   return Math.max(floor, Math.round(hrs));
 }
 
-function dwizCalc() {
+function dwizCalc(root) {
+  root = root || dwizDefaultRoot();
+  if (!root) return;
   const q = getQuote();
   const totalKg = q ? (q.takeoff||[]).reduce((s,r) => s + (r.length/1000)*(r.kgm||0)*(r.qty||1), 0) : 0;
   const tonnes = totalKg / 1000;
 
-  const conn   = document.querySelector('#dwiz-connections .dwiz-tile.active')?.dataset.val || 'simple';
-  const rep    = document.querySelector('#dwiz-repetition .dwiz-tile.active')?.dataset.val  || 'high';
-  const mat    = document.querySelector('#dwiz-material .dwiz-tile.active')?.dataset.val    || 'steel';
-  const det    = document.querySelector('#dwiz-details .dwiz-tile.active')?.dataset.val     || 'few';
+  const conn   = root.querySelector('#dwiz-connections .dwiz-tile.active')?.dataset.val || 'simple';
+  const rep    = root.querySelector('#dwiz-repetition .dwiz-tile.active')?.dataset.val  || 'high';
+  const mat    = root.querySelector('#dwiz-material .dwiz-tile.active')?.dataset.val    || 'steel';
+  const det    = root.querySelector('#dwiz-details .dwiz-tile.active')?.dataset.val     || 'few';
 
   // Base rate (h/tonne) by connection type — calibrated to real BAMA quotes
   const baseRate = { simple:2.5, standard:3.2, moment:4.2, complex:5.0 }[conn];
@@ -16652,16 +16689,24 @@ function dwizCalc() {
   if (det === 'many') factors.push('+25% wiele detali');
   if (tonnes > 40) factors.push(`−${Math.round((1-scaleMult)*100)}% ekonomia skali`);
 
-  document.getElementById('dwiz-result').style.display = '';
-  document.getElementById('dwiz-range').textContent = `${minHrs}–${maxHrs}h`;
-  document.getElementById('dwiz-factors').textContent = factors.join(' · ') || 'brak danych z takeoff — szacunek bazowy';
+  const resEl = root.querySelector('#dwiz-result');
+  if (resEl) resEl.style.display = '';
+  const rangeEl = root.querySelector('#dwiz-range');
+  if (rangeEl) rangeEl.textContent = `${minHrs}\u2013${maxHrs}h`;
+  const factEl = root.querySelector('#dwiz-factors');
+  if (factEl) factEl.textContent = factors.join(' \u00b7 ') || 'brak danych z takeoff \u2014 szacunek bazowy';
 
-  // Store midpoint for apply
-  const _dwizPanel = document.getElementById('design-wizard-panel') || document.getElementById('wiz-design-complexity'); if(_dwizPanel) _dwizPanel.dataset.mid = midHrs;
+  // Store midpoint on THIS panel for apply/generate
+  root.dataset.mid = midHrs;
 }
 
 function dwizApply() {
-  const mid = parseInt((document.getElementById('wiz-design-complexity') || document.getElementById('design-wizard-panel'))?.dataset.mid || '0');
+  // Apply lives ONLY in the mini panel — read ITS midpoint. (Previously read
+  // wiz-design-complexity first, where the mid was never stored -> mid=0 ->
+  // "apply does nothing", 2026-08-07.)
+  const panel = document.getElementById('design-wizard-panel');
+  let mid = parseInt(panel?.dataset.mid || '0');
+  if (!mid) { dwizCalc(panel); mid = parseInt(panel?.dataset.mid || '0'); }
   if (!mid) { toast('Calculate the range first', 'error'); return; }
   document.getElementById('design-hours').value = mid;
   saveAll(); recalcAll();
@@ -22112,7 +22157,7 @@ const HELP_CONTENT = {
       <div class="h-section">
         <div class="h-heading"><span class="h-icon">❓</span> FAQ</div>
         <div class="h-faq"><div class="h-q">The wizard price looks off for an unusual job</div>
-        <div class="h-a">Open the <strong>Adjust rates</strong> panel inside the wizard — every default (fab/design rate, per-tread hours, complexity multiplier, band £/m, envelope) is editable per quote without touching anyone else's settings.</div></div>
+        <div class="h-a">Open the <strong>Adjust rates</strong> panel inside the wizard — every default (fab/design rate, per-tread hours, complexity multiplier, band £/m, envelope) is editable per quote without touching anyone else's settings. To change the defaults <em>globally</em>, use the ⚙ rates drawer: the <strong>Staircases &amp; Spirals</strong> and <strong>Balustrades &amp; Handrails</strong> sections hold every hourly rate, hrs preset and multiplier the wizards start from (per-family £/m band tables stay in the wizard's Adjust panel).</div></div>
         <div class="h-faq"><div class="h-q">A section I typed isn't found</div>
         <div class="h-a">Use SCI Blue Book format (CHS48.3x3.2, PFC200x90x30, FLT16x16). Spacing is ignored. If still missing the engine warns and the row reads as missing weight until you enter kg/m.</div></div>
         <div class="h-faq"><div class="h-q">Can I edit a staircase after injecting?</div>
