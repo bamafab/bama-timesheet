@@ -1080,3 +1080,204 @@ app.http('job-bom-items-delete', {
         }
     }
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// GET /api/sdn-detail?ref=SDN-0013 — full reprintable detail of one SDN
+//
+// Joins the per-SDN despatch ledger (JobBomDespatches) back to the item rows
+// and their source assemblies, returning everything drawDnPDF needs to redraw
+// the note from data: description/profile, per-one assembly weight, max part
+// length, finish, item_type, plus the ledger qty shipped on THIS note.
+// Flat route (not a sub-path of job-bom-items/{id}) — see route-naming rule.
+// ─────────────────────────────────────────────────────────────────────────────
+app.http('sdn-detail', {
+    methods: ['GET'],
+    authLevel: 'anonymous',
+    route: 'sdn-detail',
+    handler: async (request, context) => {
+        const auth = await requireAuth(request);
+        if (auth.status) return auth;
+        try {
+            const ref = (new URL(request.url).searchParams.get('ref') || '').trim();
+            if (!ref) return badRequest('ref is required', request);
+            const res = await query(
+                `SELECT d.id  AS ledger_id,
+                        d.qty AS ship_qty,
+                        d.sharepoint_file_id  AS sdn_sharepoint_file_id,
+                        d.sharepoint_drive_id AS sdn_sharepoint_drive_id,
+                        d.sharepoint_web_url  AS sdn_sharepoint_web_url,
+                        d.file_name           AS sdn_file_name,
+                        d.despatched_at,
+                        b.id, b.job_id, b.description, b.quantity, b.despatched_qty,
+                        b.status, b.item_type, b.unit_weight_kg, b.source,
+                        st.name AS finish_name,
+                        a.assembly_mark   AS source_assembly_mark,
+                        a.total_weight_kg AS assembly_weight_kg,
+                        ap.max_length_mm  AS assembly_max_length_mm
+                 FROM JobBomDespatches d
+                 JOIN JobBomItems b ON b.id = d.bom_item_id
+                 LEFT JOIN ServiceTypes  st ON st.id = b.finish_service_id
+                 LEFT JOIN JobAssemblies a  ON a.id = b.source_assembly_id
+                 OUTER APPLY (
+                     SELECT MAX(p.length_mm) AS max_length_mm
+                     FROM JobAssemblyParts p
+                     WHERE p.assembly_id = a.id
+                 ) ap
+                 WHERE d.sdn_ref = @ref
+                 ORDER BY d.id ASC`,
+                { ref }
+            );
+            if (!res.recordset.length) return notFound('No ledger rows for that SDN — notes generated before the despatch ledger existed cannot be edited from data.', request);
+            return ok({ ref, lines: res.recordset }, request);
+        } catch (err) {
+            context.error('sdn-detail', err);
+            return serverError('Failed to load SDN detail: ' + err.message, request);
+        }
+    }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// POST /api/sdn-amend — edit an existing SDN's line quantities
+//
+// Body: { ref: 'SDN-0013', lines: [{ ledger_id, qty }] }   qty >= 0; 0 removes
+//        the line from the note. Lines not mentioned keep their current qty.
+//
+// Per changed line, in ONE transaction:
+//   delta = newQty - oldQty
+//   - ledger row updated (or deleted when qty 0)
+//   - JobBomItems.despatched_qty += delta
+//   - status recomputed for rows currently in ready_for_despatch / on_site:
+//       despatched >= quantity → 'on_site' (stamps despatched_at)
+//       otherwise              → 'ready_for_despatch' (clears despatched_at)
+//     (rows in any other status are left untouched — shouldn't occur)
+//   - fabricated marks stay capped at [0, quantity]; fixings/consumables may
+//     overship exactly as at generation time
+// Then DeliveryNoteRegister.line_count / total_qty are recomputed for the ref.
+// A note must keep at least ONE line — deleting an entire SDN is not offered.
+// ─────────────────────────────────────────────────────────────────────────────
+app.http('sdn-amend', {
+    methods: ['POST'],
+    authLevel: 'anonymous',
+    route: 'sdn-amend',
+    handler: async (request, context) => {
+        const auth = await requireAuth(request);
+        if (auth.status) return auth;
+        try {
+            const body = await request.json();
+            const ref = (body.ref || '').trim();
+            if (!ref) return badRequest('ref is required', request);
+            let edits = Array.isArray(body.lines) ? body.lines
+                .map(l => ({ ledger_id: parseInt(l.ledger_id), qty: parseInt(l.qty) }))
+                .filter(l => !isNaN(l.ledger_id) && !isNaN(l.qty) && l.qty >= 0) : [];
+            if (!edits.length) return badRequest('lines must be a non-empty array of {ledger_id, qty>=0}', request);
+
+            const db = await getPool();
+            const transaction = new sql.Transaction(db);
+            await transaction.begin();
+            try {
+                // Authoritative read of the whole note under lock.
+                const lockReq = new sql.Request(transaction);
+                lockReq.input('ref', sql.NVarChar(32), ref);
+                const cur = await lockReq.query(
+                    `SELECT d.id AS ledger_id, d.qty, d.bom_item_id,
+                            b.quantity, b.despatched_qty, b.status, b.item_type
+                     FROM JobBomDespatches d WITH (UPDLOCK, HOLDLOCK)
+                     JOIN JobBomItems b WITH (UPDLOCK) ON b.id = d.bom_item_id
+                     WHERE d.sdn_ref = @ref`
+                );
+                if (!cur.recordset.length) {
+                    await transaction.rollback();
+                    return notFound('No ledger rows for that SDN', request);
+                }
+                const byLedger = new Map(cur.recordset.map(r => [r.ledger_id, r]));
+
+                // Validate every edit against the locked state.
+                for (const e of edits) {
+                    const row = byLedger.get(e.ledger_id);
+                    if (!row) { await transaction.rollback(); return badRequest(`Ledger row ${e.ledger_id} does not belong to ${ref}`, request); }
+                    const delta = e.qty - row.qty;
+                    if (delta === 0) continue;
+                    const newDespatched = (row.despatched_qty || 0) + delta;
+                    if (newDespatched < 0) {
+                        await transaction.rollback();
+                        return badRequest(`Line ${e.ledger_id}: reducing to ${e.qty} would make the item's total despatched negative — refresh and retry.`, request);
+                    }
+                    const isLoose = row.item_type === 'fixing' || row.item_type === 'consumable';
+                    if (!isLoose && newDespatched > (row.quantity || 0)) {
+                        await transaction.rollback();
+                        return badRequest(`Line ${e.ledger_id}: ${e.qty} would take total despatched to ${newDespatched} of ${row.quantity} — fabricated marks can't be overshipped.`, request);
+                    }
+                }
+                // The note must not end up empty.
+                const finalQty = new Map(cur.recordset.map(r => [r.ledger_id, r.qty]));
+                for (const e of edits) finalQty.set(e.ledger_id, e.qty);
+                const remaining = [...finalQty.values()].filter(q => q > 0);
+                if (!remaining.length) {
+                    await transaction.rollback();
+                    return badRequest('An SDN must keep at least one line — quantities cannot all be zero.', request);
+                }
+
+                // Apply.
+                for (const e of edits) {
+                    const row = byLedger.get(e.ledger_id);
+                    const delta = e.qty - row.qty;
+                    if (delta === 0) continue;
+
+                    const ledReq = new sql.Request(transaction);
+                    ledReq.input('lid', sql.Int, e.ledger_id);
+                    if (e.qty === 0) {
+                        await ledReq.query(`DELETE FROM JobBomDespatches WHERE id = @lid`);
+                    } else {
+                        ledReq.input('q', sql.Int, e.qty);
+                        await ledReq.query(`UPDATE JobBomDespatches SET qty = @q WHERE id = @lid`);
+                    }
+
+                    const upReq = new sql.Request(transaction);
+                    upReq.input('itemId', sql.Int, row.bom_item_id);
+                    upReq.input('delta',  sql.Int, delta);
+                    const up = await upReq.query(
+                        `UPDATE JobBomItems
+                         SET despatched_qty = despatched_qty + @delta,
+                             status = CASE
+                                 WHEN status NOT IN ('ready_for_despatch','on_site') THEN status
+                                 WHEN despatched_qty + @delta >= quantity THEN 'on_site'
+                                 ELSE 'ready_for_despatch' END,
+                             despatched_at = CASE
+                                 WHEN status NOT IN ('ready_for_despatch','on_site') THEN despatched_at
+                                 WHEN despatched_qty + @delta >= quantity THEN COALESCE(despatched_at, SYSUTCDATETIME())
+                                 ELSE NULL END
+                         OUTPUT INSERTED.id, INSERTED.quantity, INSERTED.despatched_qty, INSERTED.status
+                         WHERE id = @itemId`
+                    );
+                    if (up.recordset.length !== 1) throw new Error(`Item ${row.bom_item_id} vanished mid-amend`);
+                }
+
+                // Recompute the register row for this ref.
+                const regReq = new sql.Request(transaction);
+                regReq.input('ref', sql.NVarChar(32), ref);
+                const agg = await regReq.query(
+                    `SELECT COUNT(*) AS line_count, ISNULL(SUM(qty), 0) AS total_qty
+                     FROM JobBomDespatches WHERE sdn_ref = @ref`
+                );
+                const lineCount = agg.recordset[0].line_count;
+                const totalQty  = agg.recordset[0].total_qty;
+                const reg2 = new sql.Request(transaction);
+                reg2.input('ref', sql.NVarChar(32), ref);
+                reg2.input('lc',  sql.Int, lineCount);
+                reg2.input('tq',  sql.Int, totalQty);
+                await reg2.query(
+                    `UPDATE DeliveryNoteRegister SET line_count = @lc, total_qty = @tq WHERE ref = @ref`
+                );
+
+                await transaction.commit();
+                return ok({ ref, line_count: lineCount, total_qty: totalQty }, request);
+            } catch (txErr) {
+                await transaction.rollback();
+                throw txErr;
+            }
+        } catch (err) {
+            context.error('sdn-amend', err);
+            return serverError('Failed to amend SDN: ' + err.message, request);
+        }
+    }
+});

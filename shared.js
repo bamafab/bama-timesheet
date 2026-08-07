@@ -14939,6 +14939,226 @@ async function confirmSiteDn() {
 }
 
 
+// ── SDN edit & reissue ───────────────────────────────────────────────────────
+// Any SDN with despatch-ledger rows (JobBomDespatches) can be edited after the
+// fact: change per-line quantities, drop lines entirely, correct the delivery
+// details, and reissue the PDF OVER THE SAME SharePoint file (same ref, same
+// filename — anyone holding the old link sees the corrected note). The server
+// (/api/sdn-amend) adjusts despatched_qty and item status by the exact delta
+// in one transaction, so partial-despatch maths and the SDN queue stay right.
+// Weight columns always redraw from CURRENT assembly unit weights, so fixing
+// a wrong unit weight (pencil on the assembly card) then reissuing the SDN is
+// the recovery path for batch-total OCR mistakes.
+let _sdnEdit = null;   // { ref, reg, lines }
+
+async function openSdnEditModal(ref) {
+  const proj = currentProject;
+  if (!proj?.dbId) { toast('Open the project first.', 'error'); return; }
+  let detail;
+  try {
+    detail = await api.get(`/api/sdn-detail?ref=${encodeURIComponent(ref)}`);
+  } catch (e) {
+    toast('Could not load ' + ref + ': ' + e.message, 'error');
+    return;
+  }
+  const pid = parseInt(proj.dbId);
+  let reg = (_dnRegCache[pid] || []).find(r => r.ref === ref);
+  if (!reg) {
+    try {
+      _dnRegCache[pid] = await api.get(`/api/dn-register?projectId=${pid}`);
+      reg = (_dnRegCache[pid] || []).find(r => r.ref === ref);
+    } catch (e) { /* register row optional — fall back below */ }
+  }
+  _sdnEdit = { ref, reg: reg || null, lines: detail.lines || [] };
+
+  // Line rows: qty editable; 0 (or the bin) removes the line from the note.
+  const isLoose = l => l.item_type === 'fixing' || l.item_type === 'consumable';
+  const rowHtml = (l) => {
+    // Max this line can hold = current ship qty + item's remaining headroom
+    // (fabricated capped; fixings uncapped — same rules as generation).
+    const headroom = Math.max(0, (Number(l.quantity) || 0) - (Number(l.despatched_qty) || 0));
+    const maxAttr = isLoose(l) ? '' : `max="${Number(l.ship_qty) + headroom}"`;
+    const mark = l.source === 'assembly' ? (l.source_assembly_mark || '') : '';
+    return `<div style="display:flex;align-items:center;gap:10px;padding:8px 12px;border-bottom:1px solid var(--border)" id="sdnE_row_${l.ledger_id}">
+      <span style="font-family:var(--font-mono);font-size:12px;color:var(--text);flex:1">${mark ? `<b>${escapeHtml(mark)}</b> · ` : ''}${escapeHtml(l.description || '')}</span>
+      <span style="font-size:11px;color:var(--subtle);white-space:nowrap">was <b style="color:var(--text)">${Number(l.ship_qty)}</b></span>
+      <input type="number" min="0" ${maxAttr} step="1" value="${Number(l.ship_qty)}"
+             class="sdnE-qty" id="sdnE_qty_${l.ledger_id}" data-lid="${l.ledger_id}"
+             oninput="sdnEditUpdateCount()"
+             style="width:64px;text-align:right;background:var(--bg-darker);border:1px solid var(--border);color:var(--text);font-family:var(--font-mono);font-size:12px;padding:4px 6px;border-radius:5px">
+      <button class="btn btn-ghost" title="Remove this line from the note" style="padding:4px 8px;font-size:11px"
+              onclick="document.getElementById('sdnE_qty_${l.ledger_id}').value=0;sdnEditUpdateCount()">&#128465;</button>
+    </div>`;
+  };
+  const listEl = document.getElementById('sdnEditItemList');
+  if (listEl) listEl.innerHTML =
+    `<div style="border:1px solid var(--border);border-radius:8px;overflow:hidden;max-height:340px;overflow-y:auto">${_sdnEdit.lines.map(rowHtml).join('')}</div>`;
+
+  // Delivery details: not persisted with the note, so prefill from the Job
+  // Sheet exactly like generation — fix anything here before reissuing.
+  const r = _jobSheetResolved(proj);
+  const nameGuess = reg?.destination
+    || ((proj?.client && (r.siteName || proj?.name)) ? `${proj.client} — ${r.siteName || proj.name}` : (proj?.client || r.siteName || proj?.name || ''));
+  const setVal = (id, v) => { const el = document.getElementById(id); if (el) el.value = v || ''; };
+  setVal('sdnE_DeliverName',  nameGuess);
+  setVal('sdnE_DeliverAddr',  r.lines.join('\n'));
+  setVal('sdnE_ContactName',  r.contact);
+  setVal('sdnE_ContactPhone', r.phone);
+  setVal('sdnE_BamaName',     r.bamaName || '');
+  setVal('sdnE_BamaPhone',    r.bamaPhone || '');
+  setVal('sdnE_ClientPo',     r.po);
+
+  const title = document.getElementById('sdnEditTitle');
+  if (title) title.textContent = `Edit ${ref}`;
+  const dateEl = document.getElementById('sdnEditOrigDate');
+  if (dateEl) dateEl.textContent = reg?.created_at
+    ? `Originally issued ${new Date(reg.created_at).toLocaleDateString('en-GB')} — the reissued PDF keeps that date and adds a "Reissued" stamp.`
+    : 'The reissued PDF overwrites the original file.';
+  sdnEditUpdateCount();
+  document.getElementById('sdnEditModal').classList.add('active');
+}
+
+function closeSdnEditModal() {
+  document.getElementById('sdnEditModal').classList.remove('active');
+  _sdnEdit = null;
+}
+
+function sdnEditUpdateCount() {
+  if (!_sdnEdit) return;
+  let lines = 0, pcs = 0;
+  for (const l of _sdnEdit.lines) {
+    const el = document.getElementById(`sdnE_qty_${l.ledger_id}`);
+    const q = parseInt(el?.value) || 0;
+    const row = document.getElementById(`sdnE_row_${l.ledger_id}`);
+    if (row) row.style.opacity = q > 0 ? '1' : '.4';
+    if (q > 0) { lines++; pcs += q; }
+  }
+  const el = document.getElementById('sdnEditSelCount');
+  if (el) el.textContent = `${lines} line${lines === 1 ? '' : 's'} · ${pcs} pcs after edit`;
+  const btn = document.getElementById('sdnEditConfirmBtn');
+  if (btn) {
+    const ok = lines > 0;
+    btn.disabled = !ok;
+    btn.style.opacity = ok ? '1' : '.4';
+    btn.style.cursor  = ok ? 'pointer' : 'not-allowed';
+  }
+}
+
+async function confirmSdnEdit() {
+  if (!_sdnEdit) return;
+  const ref = _sdnEdit.ref;
+  const edits = [];
+  for (const l of _sdnEdit.lines) {
+    const q = parseInt(document.getElementById(`sdnE_qty_${l.ledger_id}`)?.value);
+    if (isNaN(q) || q < 0) { toast('Quantities must be 0 or more (0 removes the line).', 'error'); return; }
+    edits.push({ ledger_id: l.ledger_id, qty: q, _line: l });
+  }
+  if (!edits.some(e => e.qty > 0)) { toast('An SDN must keep at least one line.', 'error'); return; }
+
+  const btn = document.getElementById('sdnEditConfirmBtn');
+  btn.disabled = true; btn.style.opacity = '.5';
+  const proj = currentProject;
+  try {
+    // 1. Amend the ledger + item quantities server-side (one transaction).
+    const amendRes = await api.post('/api/sdn-amend', {
+      ref, lines: edits.map(e => ({ ledger_id: e.ledger_id, qty: e.qty }))
+    });
+
+    // 2. Re-fetch the note from data — weights redraw from CURRENT assembly
+    //    unit weights, so any corrected figure prints right on the reissue.
+    const detail = await api.get(`/api/sdn-detail?ref=${encodeURIComponent(ref)}`);
+    const items = (detail.lines || []).map(l => ({
+      ...l,
+      _shipQty: Number(l.ship_qty) || 0,
+      _jobId:   l.job_id,
+      _jobName: _dnJobName(l.job_id)
+    }));
+
+    // 3. Rebuild the DN object from the modal's (editable) delivery details.
+    await loadLogoDataUri();
+    const getVal = id => (document.getElementById(id)?.value || '').trim();
+    const deliverName    = getVal('sdnE_DeliverName');
+    const deliverToLines = getVal('sdnE_DeliverAddr').split('\n').map(x => x.trim()).filter(Boolean);
+    const contactName    = getVal('sdnE_ContactName');
+    const contactPhone   = getVal('sdnE_ContactPhone');
+    const bamaName       = getVal('sdnE_BamaName');
+    const bamaPhone      = getVal('sdnE_BamaPhone');
+    const clientPo       = getVal('sdnE_ClientPo');
+    const sdnJobNames = [...new Set(items.map(i => i._jobName).filter(Boolean))];
+    const dn = {
+      number:          ref,
+      createdAt:       _sdnEdit.reg?.created_at || new Date().toISOString(),
+      reissuedAt:      new Date().toISOString(),
+      docType:         'client',
+      clientPo:        clientPo || '',
+      destinationName: deliverName || (proj?.client || proj?.name || 'Site delivery'),
+      deliverTo:       { name: deliverName || 'Site', lines: deliverToLines, contact: [contactName, contactPhone].filter(Boolean).join(' \u00b7 ') },
+      finishName:      'Site delivery',
+      jobNames:        sdnJobNames,
+      bamaContact:     (bamaName || bamaPhone) ? { name: bamaName, phone: bamaPhone } : null,
+      items
+    };
+    const pdfBlob = await renderDnPdfBlob(dn, proj || {}, currentJob || {}, `${ref}.pdf`);
+
+    // 4. Overwrite the ORIGINAL SharePoint file so every existing link shows
+    //    the corrected note. File id comes off the ledger (backfilled at
+    //    generation); path-upload fallback covers notes missing it.
+    const token = await getToken();
+    const led = (detail.lines || [])[0] || {};
+    const fileId  = led.sdn_sharepoint_file_id  || _sdnEdit.reg?.sharepoint_file_id  || null;
+    const driveId = led.sdn_sharepoint_drive_id || _sdnEdit.reg?.sharepoint_drive_id || null;
+    let uploaded = null;
+    if (fileId && driveId) {
+      const upRes = await fetch(`https://graph.microsoft.com/v1.0/drives/${driveId}/items/${fileId}/content`, {
+        method: 'PUT',
+        headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/pdf' },
+        body: pdfBlob
+      });
+      if (!upRes.ok) throw new Error(`Reissue upload failed: ${upRes.status}`);
+      uploaded = await upRes.json();
+    } else {
+      // No stored file id — file by path at the 07 - Deliveries root (refs unique).
+      const projectFolder = await findProjectFolder(proj.id);
+      if (!projectFolder) throw new Error('Project folder not found on SharePoint');
+      const dId = projectFolder.parentReference?.driveId || BAMA_DRIVE_ID;
+      const deliveriesFolder = await getOrCreateSubfolder(projectFolder.id, '07 - Deliveries', dId);
+      const upRes = await fetch(`https://graph.microsoft.com/v1.0/drives/${dId}/items/${deliveriesFolder.id}:/${encodeURIComponent(ref + '.pdf')}:/content`, {
+        method: 'PUT',
+        headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/pdf' },
+        body: pdfBlob
+      });
+      if (!upRes.ok) throw new Error(`Reissue upload failed: ${upRes.status}`);
+      uploaded = await upRes.json();
+      // Backfill the refs so the next edit hits the fast path.
+      try {
+        await api.post('/api/job-bom-items/generate-sdn/files', {
+          sdn_ref: ref,
+          sharepoint_file_id:  uploaded.id || null,
+          sharepoint_drive_id: dId || null,
+          sharepoint_web_url:  uploaded.webUrl || null,
+          file_name:           `${ref}.pdf`
+        });
+      } catch (e) { console.warn('SDN reissue file backfill failed (non-fatal):', e.message); }
+    }
+
+    // 5. Refresh everything the amend touched.
+    const pid = parseInt(proj.dbId);
+    delete _dnRegCache[pid];
+    const touchedJobs = [...new Set(items.map(i => i._jobId).filter(Boolean))];
+    for (const jid of touchedJobs) {
+      delete _bomItemsByJob[jid];
+      if (currentJob && parseInt(currentJob.id) === jid) await loadJobBomItems(jid);
+    }
+    closeSdnEditModal();
+    if (currentJob) { renderBOM(); renderSite(); }   // guards: edit can open from the project-level register with no job open
+    toast(`${ref} reissued — ${amendRes.total_qty} pc${amendRes.total_qty === 1 ? '' : 's'} across ${amendRes.line_count} line${amendRes.line_count === 1 ? '' : 's'}. The PDF was overwritten in place.`, 'success');
+    if (uploaded?.webUrl) window.open(uploaded.webUrl, '_blank');
+  } catch (e) {
+    toast(`SDN edit failed: ${e.message}`, 'error');
+    btn.disabled = false; btn.style.opacity = '1';
+  }
+}
+
 // ── Delivery Note PDF — native jsPDF, no html2canvas ─────────────────────
 // The html2canvas approach was abandoned after repeated blank/clipped output:
 // it captures the element AS LAID OUT on the live app page, so bama.css's dark
@@ -15175,7 +15395,8 @@ function drawDnPDF(jsPDF, dn, proj, job, logoDataUri) {
       value: (Array.isArray(dn.jobNames) && dn.jobNames.length) ? dn.jobNames.join(', ') : (job && job.name) },
     { label: isClient ? 'Client PO:' : null, value: isClient ? dn.clientPo : null },
     { label: isClient ? 'Client:' : 'Supplier:', value: dn.destinationName },
-    { label: isClient ? null : 'For:', value: isClient ? null : dn.finishName }
+    { label: isClient ? null : 'For:', value: isClient ? null : dn.finishName },
+    { label: 'Reissued:', value: dn.reissuedAt ? new Date(dn.reissuedAt).toLocaleDateString('en-GB', { day:'numeric', month:'short', year:'numeric' }) : null }
   ];
   const _hdr = bamaDocHeader(doc, (t.showLogo !== false ? logoDataUri : ''), {
     title: t.title || 'Delivery Note',
@@ -19477,6 +19698,76 @@ function heaviestPartIndex(parts) {
   return best;
 }
 
+// ── Assembly per-ONE weight chip + editor ────────────────────────────────────
+// JobAssemblies.total_weight_kg is the weight of ONE assembly — every consumer
+// (DN Unit Wt. × qty, fab-output kg, project tonnage) multiplies it by qty.
+// The chip makes that figure visible on the card; the pencil (draftsman, job
+// open) corrects it when OCR stored the drawing's BATCH total instead — the
+// classic symptom is a delivery note whose Unit Wt. equals the whole mark's
+// weight and whose Line Wt. is qty× too big.
+function asmWeightChip(a) {
+  const canEdit = isDraftsman && currentJob && currentJob.status !== 'closed';
+  const has = a.total_weight_kg != null && isFinite(Number(a.total_weight_kg));
+  const label = has ? `${Number(a.total_weight_kg).toFixed(Number(a.total_weight_kg) < 10 ? 2 : 1)} kg ea` : 'no unit wt';
+  const pencil = canEdit
+    ? `<span onclick="event.stopPropagation();openAsmWeightEdit(${a.id})" title="Edit the per-ONE-assembly weight (feeds DN unit weight and tonnage)" style="cursor:pointer;margin-left:4px">&#9998;</span>`
+    : '';
+  const col = has ? 'color:#93c5fd;background:rgba(59,130,246,.12);border:1px solid rgba(59,130,246,.25)'
+                  : 'color:#fcd34d;background:rgba(234,179,8,.12);border:1px solid rgba(234,179,8,.3)';
+  return `<span style="${col};padding:2px 9px;border-radius:6px;font-size:11px;font-family:var(--font-mono);white-space:nowrap">${label}${pencil}</span>`;
+}
+
+// Self-injecting modal (BAMA UI rule — never window.prompt).
+function openAsmWeightEdit(asmId) {
+  const jobId = currentJob?.id ? parseInt(currentJob.id) : null;
+  const a = ((jobId && _assembliesByJob[jobId]) || []).find(x => x.id === asmId);
+  if (!a) { toast('Assembly not found — refresh and retry.', 'error'); return; }
+  document.getElementById('asmWtModal')?.remove();
+  const qty = Number(a.quantity) || 1;
+  const cur = a.total_weight_kg != null ? Number(a.total_weight_kg) : null;
+  // ÷qty quick fix — only meaningful when several off and a stored figure exists.
+  const divHint = (qty > 1 && cur != null) ? `
+    <button class="btn btn-ghost" style="padding:6px 12px;font-size:11px;margin-top:8px" onclick="document.getElementById('asmWtInput').value='${(cur / qty).toFixed(3)}'">
+      Stored figure is the batch total for all ${qty} &rarr; use ${(cur / qty).toFixed(2)} kg each
+    </button>` : '';
+  const div = document.createElement('div');
+  div.id = 'asmWtModal';
+  div.className = 'modal-overlay active';
+  div.innerHTML = `<div class="modal" style="width:420px;max-width:94vw">
+    <div class="modal-title" style="margin-bottom:6px">Unit weight — ${escapeHtml(a.assembly_mark)}</div>
+    <div style="color:var(--muted);font-size:12px;margin-bottom:14px">
+      Weight of <b>ONE</b> assembly in kg. Delivery notes print this as Unit Wt. and multiply by the quantity shipped (${qty} off on this mark), so a batch total entered here doubles up on every note.
+    </div>
+    <label style="font-size:11px;color:var(--muted)">Weight of one assembly (kg)</label>
+    <input id="asmWtInput" type="number" min="0.001" step="0.001" class="field-input" value="${cur != null ? cur : ''}" placeholder="kg each">
+    ${divHint}
+    <button class="btn btn-primary btn-full" style="margin-top:16px;padding:12px" onclick="saveAsmWeightEdit(${asmId})">Save</button>
+    <button class="btn btn-ghost btn-full" style="margin-top:8px;padding:10px" onclick="document.getElementById('asmWtModal').remove()">Cancel</button>
+  </div>`;
+  document.body.appendChild(div);
+  setTimeout(() => document.getElementById('asmWtInput')?.focus(), 50);
+}
+
+async function saveAsmWeightEdit(asmId) {
+  const v = Number(document.getElementById('asmWtInput')?.value);
+  if (!isFinite(v) || v <= 0) { toast('Enter a weight above zero.', 'error'); return; }
+  try {
+    const res = await api.put(`/api/job-assemblies/${asmId}/weight`, { total_weight_kg: v });
+    const jobId = currentJob?.id ? parseInt(currentJob.id) : null;
+    if (jobId && _assembliesByJob[jobId]) {
+      const idx = _assembliesByJob[jobId].findIndex(x => x.id === asmId);
+      if (idx >= 0) _assembliesByJob[jobId][idx].total_weight_kg = res.assembly?.total_weight_kg ?? v;
+      delete _bomItemsByJob[jobId];   // assembly_weight_kg is joined into BOM rows
+    }
+    document.getElementById('asmWtModal')?.remove();
+    toast('Unit weight saved — new delivery notes use the corrected figure. Already-issued SDNs can be reissued from the deliveries register.', 'success');
+    renderAssembly();
+    if (jobId) { await loadJobBomItems(jobId); renderBOM(); }
+  } catch (e) {
+    toast('Save failed: ' + e.message, 'error');
+  }
+}
+
 function renderAssembly() {
   const container = document.getElementById('assemblyContent');
   if (!container) return;
@@ -19595,6 +19886,7 @@ function renderAssembly() {
         <div style="font-family:var(--font-mono);font-size:15px;font-weight:700;color:${isFabricated ? 'var(--text)' : 'var(--accent)'};min-width:48px">${escapeHtml(a.assembly_mark)}</div>
         <div style="font-size:13px;color:var(--text);min-width:60px">${Number(a.quantity)} off</div>
         ${finishBadge}
+        ${asmWeightChip(a)}
         <span style="display:flex;gap:6px;flex-wrap:wrap">${progressChips}</span>
         ${isFabricated
           ? `<span style="margin-left:auto;color:var(--green);font-size:11px">&#10003; Complete ${a.fabricated_at ? new Date(a.fabricated_at).toLocaleString('en-GB', { day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit' }) : ''}${a.fabricated_by ? ' · ' + escapeHtml(a.fabricated_by) : ''}</span>`
@@ -19862,6 +20154,7 @@ async function _dnRenderRegister(projectId, jobId) {
       <div class="file-row-date">${dateStr}</div>
       <div class="file-row-actions">
         ${r.sharepoint_web_url ? `<a href="${r.sharepoint_web_url}" target="_blank" class="btn btn-ghost" style="padding:4px 10px;font-size:11px;text-decoration:none">&#128065; View</a>` : ''}
+        ${isSite && isDraftsman ? `<button class="btn btn-ghost" style="padding:4px 10px;font-size:11px" onclick="openSdnEditModal('${escapeHtml(r.ref)}')" title="Edit quantities / remove lines and reissue the PDF over the same file">&#9998; Edit</button>` : ''}
       </div>
     </div>`;
   }).join('');
@@ -19904,6 +20197,7 @@ async function openProjectDeliveriesModal() {
             <div class="file-row-date">${dateStr}</div>
             <div class="file-row-actions">
               ${r.sharepoint_web_url ? `<a href="${r.sharepoint_web_url}" target="_blank" class="btn btn-ghost" style="padding:4px 10px;font-size:11px;text-decoration:none">&#128065; View</a>` : ''}
+              ${isSite && isDraftsman ? `<button class="btn btn-ghost" style="padding:4px 10px;font-size:11px" onclick="closeProjectDeliveriesModal();openSdnEditModal('${escapeHtml(r.ref)}')" title="Edit quantities / remove lines and reissue the PDF over the same file">&#9998; Edit</button>` : ''}
             </div>
           </div>`;
         }).join('')

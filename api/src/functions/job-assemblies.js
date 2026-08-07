@@ -1072,6 +1072,54 @@ app.http('job-assemblies-rollback', {
 
 // ─────────────────────────────────────────────────────────────────────────────
 // PUT /api/job-assemblies/:id/attach-pdf
+// ─────────────────────────────────────────────────────────────────────────────
+// PUT /api/job-assemblies/:id/weight — correct the per-ONE-assembly weight
+// Body: { total_weight_kg }   (kg for ONE assembly; > 0)
+//
+// total_weight_kg feeds every downstream consumer as a UNIT weight (DN
+// Unit Wt. × qty, fab-output kg, project tonnage, despatch %). OCR sometimes
+// stores the drawing's BATCH total instead (drawings whose printed total
+// covers all N assemblies — e.g. folded-flashing sheets with no parts list),
+// which then gets multiplied by qty AGAIN on delivery notes. This endpoint
+// lets a draftsman correct the figure from the assembly card. Optional
+// total_area_m2 accepted on the same call.
+// ─────────────────────────────────────────────────────────────────────────────
+app.http('job-assemblies-weight', {
+    methods: ['PUT'],
+    authLevel: 'anonymous',
+    route: 'job-assemblies/{id}/weight',
+    handler: async (request, context) => {
+        const auth = await requireAuth(request);
+        if (auth.status) return auth;
+        try {
+            const id = parseInt(request.params.id);
+            if (!id || isNaN(id)) return badRequest('Invalid id', request);
+            const body = await request.json();
+            const wt = Number(body.total_weight_kg);
+            if (!isFinite(wt) || wt <= 0) return badRequest('total_weight_kg must be a positive number (kg for ONE assembly)', request);
+            const sets = ['total_weight_kg = @wt'];
+            const params = { id, wt: Number(wt.toFixed(3)) };
+            if (body.total_area_m2 != null && body.total_area_m2 !== '') {
+                const ar = Number(body.total_area_m2);
+                if (!isFinite(ar) || ar < 0) return badRequest('total_area_m2 must be a non-negative number', request);
+                sets.push('total_area_m2 = @ar');
+                params.ar = Number(ar.toFixed(3));
+            }
+            const up = await query(
+                `UPDATE JobAssemblies SET ${sets.join(', ')}
+                 OUTPUT INSERTED.* WHERE id = @id`,
+                params
+            );
+            if (!up.recordset.length) return notFound('Assembly not found', request);
+            return ok({ assembly: up.recordset[0] }, request);
+        } catch (err) {
+            context.error('Error updating assembly weight:', err);
+            return serverError('Failed to update assembly weight: ' + err.message, request);
+        }
+    }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Attaches (or replaces) a SharePoint PDF reference on an existing assembly.
 // Called after a manual-entry assembly has its PDF uploaded client-side.
 //

@@ -811,6 +811,73 @@
 
 
 <!-- ═══════════════════════════════════════
+     SDN EDIT & REISSUE MODAL
+     Edits an existing site delivery note from its despatch-ledger rows:
+     per-line quantities (0 removes the line), delivery details, then the PDF
+     is redrawn with CURRENT assembly unit weights and overwritten in place on
+     SharePoint (same ref, same file). /api/sdn-amend keeps despatched_qty and
+     item statuses consistent in one transaction.
+══════════════════════════════════════════ -->
+<div class="modal-overlay" id="sdnEditModal">
+  <div class="modal" style="width:640px;max-width:96vw;max-height:92vh;overflow-y:auto">
+    <div class="modal-title" style="margin-bottom:6px" id="sdnEditTitle">Edit SDN</div>
+    <div style="color:var(--muted);font-size:12px;margin-bottom:6px" id="sdnEditOrigDate"></div>
+    <div style="color:var(--muted);font-size:12px;margin-bottom:18px">
+      Change the quantity shipped on each line, or remove a line entirely (set 0 / bin). Saving adjusts the despatch ledger, reprints the note with current unit weights and overwrites the original PDF — old links show the corrected note.
+    </div>
+
+    <div class="field-label" style="display:flex;align-items:center">LINES ON THIS NOTE
+      <span style="margin-left:auto;font-weight:400;text-transform:none;letter-spacing:0;color:var(--muted);font-size:11px" id="sdnEditSelCount"></span>
+    </div>
+    <div id="sdnEditItemList" style="margin-bottom:20px"></div>
+
+    <div class="field-label">DELIVERY DETAILS
+      <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--muted);font-size:11px">— the original note's details aren't stored, so these prefill from the Job Sheet / project. Check them before reissuing.</span>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:8px">
+      <div style="grid-column:1 / -1">
+        <label style="font-size:11px;color:var(--muted)">Deliver to (name)</label>
+        <input id="sdnE_DeliverName" type="text" class="field-input" placeholder="e.g. Client — Project">
+      </div>
+      <div style="grid-column:1 / -1">
+        <label style="font-size:11px;color:var(--muted)">Site address</label>
+        <textarea id="sdnE_DeliverAddr" class="field-input" rows="3" style="resize:vertical" placeholder="One line per row"></textarea>
+      </div>
+      <div>
+        <label style="font-size:11px;color:var(--muted)">Site contact</label>
+        <input id="sdnE_ContactName" type="text" class="field-input" placeholder="Name">
+      </div>
+      <div>
+        <label style="font-size:11px;color:var(--muted)">Site phone</label>
+        <input id="sdnE_ContactPhone" type="text" class="field-input" placeholder="Phone">
+      </div>
+      <div>
+        <label style="font-size:11px;color:var(--muted)">BAMA contact on site</label>
+        <input id="sdnE_BamaName" type="text" class="field-input" placeholder="Our person on site">
+      </div>
+      <div>
+        <label style="font-size:11px;color:var(--muted)">BAMA contact phone</label>
+        <input id="sdnE_BamaPhone" type="text" class="field-input" placeholder="Phone">
+      </div>
+      <div style="grid-column:1 / -1">
+        <label style="font-size:11px;color:var(--muted)">Client PO number <span style="color:var(--muted)">(optional)</span></label>
+        <input id="sdnE_ClientPo" type="text" class="field-input" placeholder="Client's purchase order ref">
+      </div>
+    </div>
+
+    <button class="btn btn-primary btn-full" id="sdnEditConfirmBtn"
+            onclick="confirmSdnEdit()"
+            style="padding:14px;font-size:15px">
+      Save changes &amp; reissue PDF
+    </button>
+    <button class="btn btn-ghost btn-full" onclick="closeSdnEditModal()" style="margin-top:10px;padding:12px">
+      Cancel
+    </button>
+  </div>
+</div>
+
+
+<!-- ═══════════════════════════════════════
      SITE PACK MODAL
      Site installation pack generator. Header + fixings are deterministic
      (pulled from the project + job BOM); the Scope of Work is drafted by AI
@@ -1109,6 +1176,6 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf-lib/1.17.1/pdf-lib.min.js"></script>
 <script src="steel-data.js?v=20260731s"></script>
-<script src="shared.js?v=20260806b"></script>
+<script src="shared.js?v=20260807a"></script>
 </body>
 </html>
