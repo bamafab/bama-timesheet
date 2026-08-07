@@ -14627,7 +14627,26 @@ function renderQuotationLines() {
     const dragAttrs = i => `id="ql-row-${i}" draggable="true"
       ondragstart="onQlDragStart(event,${i})" ondragover="onQlDragOver(event,${i})"
       ondragleave="onQlDragLeave(event)" ondrop="onQlDrop(event,${i})" ondragend="onQlDragEnd()"`;
-    cont.innerHTML = (q.customLines||[]).map((l,i) => {
+    // Engine reference strip — takeoff/wizard price for counting only,
+    // never part of this quote's total.
+    const _ref = computeEngineReference(q);
+    const refHtml = _ref ? `
+      <div style="margin:6px 0 10px;background:rgba(74,158,255,0.06);border:1px solid rgba(74,158,255,0.25);border-radius:8px;padding:8px 12px">
+        <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px">
+          <span style="font-size:11px;color:var(--muted)">⚙ <strong style="color:var(--text)">Engine reference</strong> from takeoff/wizards — <em>not included in this quote</em>${_ref.totalKg>0?` · ${(_ref.totalKg/1000).toFixed(2)}t`:''}</span>
+          <span style="display:flex;align-items:center;gap:8px">
+            <span style="font-family:var(--font-mono);font-size:13px;color:#4a9eff;font-weight:700">${fmt(_ref.total)}</span>
+            <button class="btn btn-ghost btn-sm" style="font-size:10px;padding:2px 8px" onclick="custAddLineFromEngine('Structural steelwork — supply &amp; install', ${_ref.total})" title="Add the whole engine total as one lump-sum line">→ add as line</button>
+          </span>
+        </div>
+        ${_ref.areas.length ? `<div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:8px">${_ref.areas.map(a => `
+          <span style="display:inline-flex;align-items:center;gap:6px;background:var(--card);border:1px solid var(--border);border-radius:6px;padding:3px 8px;font-size:11px">
+            <span style="color:var(--text)">${escHtml(a.name)}</span>
+            <span style="font-family:var(--font-mono);color:#4a9eff">${fmt(a.total)}</span>
+            <button class="btn-icon" style="font-size:10px;height:20px;padding:0 5px" onclick="custAddLineFromEngine('${escHtml((a.name||'Item').replace(/'/g,''))}', ${a.total})" title="Add ${escHtml(a.name)} as a lump-sum line at its engine price">→</button>
+          </span>`).join('')}</div>` : ''}
+      </div>` : '';
+    cont.innerHTML = refHtml + (q.customLines||[]).map((l,i) => {
       if (l.kind === 'heading') {
         // Section/area heading (e.g. "Level 1 — Balcony Balustrades") — no figures, excluded from totals
         return `<div class="quotation-line quotation-line-heading" ${dragAttrs(i)}>
@@ -14707,6 +14726,36 @@ function addCustomLine() {
   q.customLines = q.customLines || [];
   q.customLines.push({ desc:'', qty:1, unit:'m', price:0 });
   saveAll(); renderQuotationLines();
+}
+
+// ── Engine reference for CUSTOM quotes (2026-08-07) ─────────────────────────
+// Custom-lines quotes bypass the pricing engine entirely, but the takeoff +
+// wizards still work as a COSTING CALCULATOR: run the engine in parallel on a
+// type-neutral clone and show its totals as a reference that is NEVER included
+// in the quote — the quote total stays purely the sum of the custom lines.
+// Each area (e.g. Gantry / Steps / Cat ladders) can be inserted as a lump-sum
+// line at its engine sell price, so the client sees clean lump sums while the
+// full breakdown stays internal.
+function computeEngineReference(q) {
+  if (!q || q.type !== 'custom') return null;
+  try {
+    const clone = Object.assign({}, q, { type: 'bama', _imported: false });
+    const C = computeQuoteTotals(clone, rates);
+    if (!C || !(C.total > 0)) return null;
+    let areaRows = [];
+    if ((q.areas || []).length) {
+      try { areaRows = (computeAreaBreakdown(clone) || {}).rows || []; } catch (e) {}
+    }
+    return { total: C.total, totalKg: C.totalKg, areas: areaRows };
+  } catch (e) { return null; }
+}
+
+function custAddLineFromEngine(desc, amount) {
+  const q = getQuote(); if (!q) return;
+  q.customLines = q.customLines || [];
+  q.customLines.push({ desc: desc || 'Item', qty: 1, unit: 'sum', price: Math.round((parseFloat(amount)||0)) });
+  saveAll(); renderQuotationLines();
+  toast(`Line added at £${Math.round(parseFloat(amount)||0).toLocaleString()} — engine reference, edit freely`, 'success');
 }
 
 function addCustomHeading() {
@@ -22303,7 +22352,7 @@ const HELP_CONTENT = {
         <div class="h-faq"><div class="h-q">The total here doesn't match Calcs</div>
         <div class="h-a">Calcs shows pre-margin subtotal + margin separately. Quotation shows the final sell price. They should match when margin is applied — check the margin slider.</div></div>
         <div class="h-faq"><div class="h-q">Can I use fully custom line items?</div>
-        <div class="h-a">Yes — change quote type to Custom. You can then add/remove/rename lines freely. Useful for BoQ-style quotes. Each line shows a live Amount (qty × rate). Use <b>+ Add Heading</b> to insert section headings between lines (e.g. "Level 1 — Balcony Balustrades", "Level 2 — Terrace") — headings carry no value, don't affect totals, and print as bold section dividers on the quote PDF. Drag the ⠿ handle to reorder any line or heading — dropping inserts it above the highlighted row, same as the takeoff grid.</div></div>
+        <div class="h-a">Yes — change quote type to Custom. You can then add/remove/rename lines freely. Useful for BoQ-style quotes. Each line shows a live Amount (qty × rate). Use <b>+ Add Heading</b> to insert section headings between lines (e.g. "Level 1 — Balcony Balustrades", "Level 2 — Terrace") — headings carry no value, don't affect totals, and print as bold section dividers on the quote PDF. Drag the ⠿ handle to reorder any line or heading — dropping inserts it above the highlighted row, same as the takeoff grid. <b>Engine reference:</b> the takeoff and wizards still work as a private calculator on Custom quotes — price the job in Calcs as normal (assign each structure to its own <em>area</em>, e.g. Gantry / Steps / Cat ladders) and a blue reference strip appears above the lines showing the engine total and each area's price. It is <em>never</em> included in the quote — click <b>→</b> next to an area (or "→ add as line" for the whole total) to insert it as an editable lump-sum line, so the client sees clean lump sums while the full breakdown stays internal.</div></div>
       </div>`
   },
 
