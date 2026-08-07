@@ -378,6 +378,27 @@ app.http('tender-register-update', {
         let body;
         try { body = await req.json(); } catch { return badRequest('Invalid JSON', req); }
 
+        // ── Hard delete ────────────────────────────────────────────────────
+        // The dashboard's "Delete tender" sends { status:'Deleted', _hardDelete:true }
+        // and promises "cannot be undone". Previously this flag was IGNORED —
+        // the row lingered as status='Deleted', permanently locking the
+        // reference in UX_TenderRegister_Reference while qb-next-ref reissued
+        // it → duplicate-key on the next tender create (2026-08-07). Now the
+        // row is actually removed, freeing the reference. SharePoint folders
+        // are left untouched.
+        if (body._hardDelete === true && body.status === 'Deleted') {
+            try {
+                const gone = (await query(
+                    `DELETE FROM TenderRegister OUTPUT DELETED.reference WHERE id = @id`,
+                    { id }
+                )).recordset;
+                if (!gone.length) return badRequest('Tender not found', req);
+                return ok({ deleted: true, reference: gone[0].reference }, req);
+            } catch (e) {
+                return serverError(e.message, req);
+            }
+        }
+
         try {
             // If the assignee has changed, reset the notify state so the badge
             // flips back to "not notified" — prompting a resend to the new person.

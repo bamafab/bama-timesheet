@@ -401,6 +401,7 @@ tr.drag-dragging { opacity:0.35; }
             <option value="sent">Sent</option>
             <option value="won">Won</option>
             <option value="lost">Lost</option>
+            <option value="deleted">Archived</option>
           </select>
           <button class="btn btn-ghost btn-sm" onclick="duplicateQuote()" title="Duplicate this quote as a new draft">⧉ Duplicate</button>
           <button class="btn btn-ghost btn-sm" onclick="backfillFromPDF()" title="Mark as imported and read header + line totals from the original quote PDF">📥 Backfill from PDF</button>
@@ -7563,8 +7564,8 @@ async function newQuote() {
   try { ref = await nextQuoteRef(); }
   catch(e) { toast('Could not get next reference: ' + e.message, 'error'); return; }
   // Guard: warn if this ref already exists locally (shouldn't happen, but belt-and-braces)
-  if (quotes.some(q => q.ref === ref && q.status !== 'deleted')) {
-    toast(`Ref ${ref} already exists — check for duplicates`, 'error');
+  if (quotes.some(q => q.ref === ref)) {
+    toast(`Ref ${ref} already exists (possibly archived — see the Archived filter pill)`, 'error');
     return;
   }
 
@@ -7711,12 +7712,15 @@ async function deleteQuote() {
 
   // Never-sent drafts can be PERMANENTLY deleted (Fault Register F4) —
   // frees the quote number immediately (e.g. an accidental Duplicate).
+  // Archived (status 'deleted') never-sent quotes qualify too: the backend
+  // guard has always allowed them, but the UI only offered re-archiving,
+  // leaving the number locked in the unique index forever (2026-08-07).
   // Anything that has been sent keeps its history: archive only.
-  const neverSent = (q.status === 'draft' || !q.status) && !q.dateSent;
+  const neverSent = (q.status === 'draft' || q.status === 'deleted' || !q.status) && !q.dateSent;
   if (neverSent) {
     const hard = await bamaConfirm(
-      `"${q.ref}" is a draft that was never sent. Delete it permanently? This cannot be undone and frees the quote number for reuse. (Cancel here to archive it instead.)`,
-      'Delete draft permanently'
+      `"${q.ref}" was never sent to a client. Delete it permanently? This cannot be undone and frees the quote number for reuse. (Cancel here to archive it instead — an archived quote KEEPS its number reserved.)`,
+      'Delete permanently'
     );
     if (hard) {
       try {
@@ -7748,7 +7752,7 @@ async function deleteQuote() {
     renderSidebar();
     document.getElementById('quoteEditor').style.display = 'none';
     document.getElementById('emptyState').style.display = '';
-    toast(`"${q.ref}" archived — find it via status filter if needed`, 'success');
+    toast(`"${q.ref}" archived — its number stays reserved. Find it under the Archived filter pill.`, 'success');
   } catch(e) {
     toast('Failed to archive quote: ' + e.message, 'error');
   }
@@ -7767,8 +7771,8 @@ async function duplicateQuote(id) {
   }
   let ref;
   try { ref = await nextQuoteRef(); } catch(e) { toast('Could not get next reference', 'error'); return; }
-  if (quotes.some(q => q.ref === ref && q.status !== 'deleted')) {
-    toast(`Ref ${ref} already exists — reload and try again`, 'error');
+  if (quotes.some(q => q.ref === ref)) {
+    toast(`Ref ${ref} already exists (possibly archived — see the Archived filter pill)`, 'error');
     return;
   }
   const now = new Date();
@@ -8068,8 +8072,15 @@ function setQuoteFilter(f) {
 
 function renderSidebar() {
   const list = document.getElementById('quoteList');
-  let visibleQuotes = quotes.filter(q => q.status !== 'deleted');
-  const archivedCount = quotes.length - visibleQuotes.length;
+  // 'archived' pill flips the view: ONLY soft-deleted quotes. Everywhere else
+  // they're hidden. This is how an archived quote is reopened (to restore or
+  // permanently delete it) — before 2026-08-07 the help text promised this
+  // filter but it didn't exist, so archived quotes were unreachable.
+  const archivedQuotes = quotes.filter(q => q.status === 'deleted');
+  let visibleQuotes = _quoteStatusFilter === 'archived'
+    ? archivedQuotes
+    : quotes.filter(q => q.status !== 'deleted');
+  const archivedCount = archivedQuotes.length;
   if (!visibleQuotes.length) {
     list.innerHTML = `<div style="padding:16px;font-size:12px;color:var(--subtle);text-align:center">No quotes yet${archivedCount ? `<br><span style="font-size:11px">( ${archivedCount} archived — change status filter to see them)</span>` : ''}</div>`;
     return;
@@ -8099,12 +8110,13 @@ function renderSidebar() {
     return !isNaN(dt) && dt <= qbToday;
   };
   const matchFilter = (q, f) =>
-    f === 'all'   ? true :
-    f === 'chase' ? chaseDue(q) :
+    f === 'all'      ? true :
+    f === 'chase'    ? chaseDue(q) :
+    f === 'archived' ? q.status === 'deleted' :
     q.status === f;
 
-  const counts = { all: visibleQuotes.length, draft:0, sent:0, chase:0, won:0, lost:0 };
-  visibleQuotes.forEach(q => {
+  const counts = { all: quotes.length - archivedCount, draft:0, sent:0, chase:0, won:0, lost:0, archived: archivedCount };
+  quotes.forEach(q => {
     if      (q.status === 'draft') counts.draft++;
     else if (q.status === 'sent') { counts.sent++; if (chaseDue(q)) counts.chase++; }
     else if (q.status === 'won')   counts.won++;
@@ -8118,6 +8130,7 @@ function renderSidebar() {
     { key:'chase', label:'Chase', color:'var(--red)'   },
     { key:'won',   label:'Won',   color:'var(--green)' },
     { key:'lost',  label:'Lost',  color:'var(--subtle)'},
+    { key:'archived', label:'Archived', color:'#8b6f47' },
   ];
   const bar = document.getElementById('quoteFilterBar');
   if (bar) {
@@ -21783,7 +21796,7 @@ async function createImportedQuote() {
   const btn = document.getElementById('impCreateBtn');
   const ref = (document.getElementById('impRef').value || '').trim().toUpperCase();
   if (!ref) { toast('Reference is required', 'error'); return; }
-  if (quotes.some(q => q.ref === ref && q.status !== 'deleted')) {
+  if (quotes.some(q => q.ref === ref)) {
     toast(`Ref ${ref} already exists \u2014 open it instead, or use a different ref`, 'error'); return;
   }
   const p = (_impFile && _impFile._parsed) || {};
@@ -21935,7 +21948,7 @@ const HELP_CONTENT = {
       <div class="h-section">
         <div class="h-heading"><span class="h-icon">🗺</span> How Quote Builder works</div>
         <p class="h-p">A five-step workflow — work left to right through the tabs. Each tab feeds the next.</p>
-        <div class="h-tip"><strong>Deleting vs archiving:</strong> a draft that was <em>never sent</em> can be deleted permanently (Delete button → first prompt) — this frees its quote number for reuse, e.g. after an accidental Duplicate. Anything that has been sent to a client can only be <em>archived</em> (recoverable via the status filter) so its history is kept. Every status change and deletion is recorded in the change log with who did it and when.</div>
+        <div class="h-tip"><strong>Deleting vs archiving:</strong> a quote that was <em>never sent</em> (draft or archived) can be deleted permanently (Delete button → first prompt) — this frees its quote number for reuse, e.g. after an accidental Duplicate. Anything that has been sent to a client can only be <em>archived</em> so its history is kept. <strong>An archived quote keeps its number reserved</strong> — the numbering will skip over it; only permanent deletion frees a number. Archived quotes live under the <em>Archived</em> filter pill in the sidebar: open one there to restore it (change its status back) or delete it permanently. Every status change and deletion is recorded in the change log with who did it and when.</div>
         <ul class="h-steps">
           <li><span class="h-step-num">1</span><div><strong>Header</strong> — client details, dates, scope. Appears at the top of every PDF.</div></li>
           <li><span class="h-step-num">2</span><div><strong>Takeoff</strong> — every steel member: section, length, qty, finish. Drives tonnage and material cost.</div></li>

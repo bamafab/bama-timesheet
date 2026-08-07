@@ -105,12 +105,17 @@ app.http('qb-quotes-next-ref', {
             // for all three table scans below.
             const yearPat = `${prefix}%`;
 
-            // Scan this month's references across all tables, find highest sequence
+            // Scan this month's references across all tables, find highest sequence.
+            // NO status filters: a reference is reserved while ANY row physically
+            // holds it — the unique indexes (UX_QBQuotes_RefRevision,
+            // UX_TenderRegister_Reference) don't care about status, so skipping
+            // soft-deleted rows here reissued numbers that then collided on
+            // insert ("quote with that number already exists", 2026-08-07).
+            // Hard delete (row removal) is the ONLY thing that frees a number.
             const [qbRes, tRes, trRes] = await Promise.all([
                 query(
                     `SELECT TOP 1 reference FROM QuoteBuilderQuotes
                       WHERE reference LIKE @yearPat
-                        AND (status IS NULL OR status <> 'deleted')
                       ORDER BY LEN(reference) DESC, reference DESC`,
                     { yearPat }
                 ),
@@ -122,7 +127,7 @@ app.http('qb-quotes-next-ref', {
                 ),
                 query(
                     `SELECT TOP 1 reference FROM TenderRegister
-                      WHERE reference LIKE @yearPat AND status != 'Deleted'
+                      WHERE reference LIKE @yearPat
                       ORDER BY LEN(reference) DESC, reference DESC`,
                     { yearPat }
                 )
@@ -305,6 +310,27 @@ app.http('qb-quotes-create', {
             return created(result.recordset[0], request);
         } catch (err) {
             if (err.message?.includes('UX_QBQuotes_RefRevision')) {
+                // Tell the user exactly WHAT holds the number, not just that
+                // something does — an archived (soft-deleted) holder was
+                // invisible in the UI and looked like a phantom (2026-08-07).
+                try {
+                    const holder = (await query(
+                        `SELECT TOP 1 id, status, date_sent FROM QuoteBuilderQuotes
+                          WHERE reference = @reference AND revision = @revision`,
+                        { reference, revision }
+                    )).recordset[0];
+                    if (holder && holder.status === 'deleted') {
+                        return badRequest(
+                            `${reference} is held by an ARCHIVED quote (id ${holder.id}). ` +
+                            `In QB, use the Archived filter pill, open it, then Delete permanently — or restore it by changing its status.`,
+                            request);
+                    }
+                    if (holder) {
+                        return badRequest(
+                            `${reference}${revision ? ' rev ' + revision : ''} already exists (status: ${holder.status || 'draft'}${holder.date_sent ? ', sent' : ''}).`,
+                            request);
+                    }
+                } catch (e) { context.warn('holder lookup failed:', e.message); }
                 return badRequest('A quote with that reference and revision already exists', request);
             }
             context.error('qb-quotes-create:', err);
