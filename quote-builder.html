@@ -3597,7 +3597,7 @@ tr.drag-dragging { opacity:0.35; }
           <span>🚚 Delivery</span><span class="wiz-panel-badge" id="wiz-badge-delivery">Auto (by tonnage)</span><span class="wiz-chevron">▾</span>
         </div>
         <div class="wiz-panel-body">
-          <div style="font-size:11px;color:var(--muted);margin-bottom:8px">Auto-estimated from tonnage — override here if known</div>
+          <div style="font-size:11px;color:var(--muted);margin-bottom:8px">Auto-estimated from tonnage — override here if known. Vehicle types are multi-select: pick every transport the job needs (e.g. artic + transit van) and set loads per type below.</div>
           <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px" id="wiz-delivery-tiles">
             <div class="wiz-tile active" data-delivery="auto" onclick="wizSelectDelivery(this)">Auto-estimate<br><span style="font-size:10px;color:var(--muted)">Based on tonnage</span></div>
             <div class="wiz-tile" data-delivery="transit" onclick="wizSelectDelivery(this)">Transit Van<br><span style="font-size:10px;color:var(--muted)">£250/load</span></div>
@@ -3608,12 +3608,7 @@ tr.drag-dragging { opacity:0.35; }
             <div class="wiz-tile" data-delivery="client_collect" onclick="wizSelectDelivery(this)">Client Collects<br><span style="font-size:10px;color:var(--muted)">No delivery charge</span></div>
           </div>
           <div id="wiz-delivery-manual" style="display:none;margin-top:4px">
-            <label style="font-size:11px;color:var(--muted)">No. of loads</label>
-            <input type="number" id="wiz-delivery-loads" value="1" min="1"
-              style="background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:6px 10px;color:var(--text);font-size:13px;font-family:var(--font-mono);width:70px;margin-left:8px;margin-right:12px">
-            <label style="font-size:11px;color:var(--muted)">Rate per load (£)</label>
-            <input type="number" id="wiz-delivery-rate" value="800" min="0"
-              style="background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:6px 10px;color:var(--text);font-size:13px;font-family:var(--font-mono);width:90px;margin-left:8px">
+            <div id="wiz-delivery-manual-rows" style="display:flex;flex-direction:column;gap:6px"></div>
           </div>
         </div>
       </div>
@@ -15370,6 +15365,7 @@ function openWizard(q) {
   document.querySelectorAll('#wiz-delivery-tiles .wiz-tile').forEach(t => t.classList.remove('active'));
   document.querySelector('[data-delivery="auto"]')?.classList.add('active');
   document.getElementById('wiz-delivery-manual').style.display = 'none';
+  const _delRows = document.getElementById('wiz-delivery-manual-rows'); if (_delRows) _delRows.innerHTML = '';
   // Default prelims
   document.querySelectorAll('#wiz-prelim-tiles .wiz-tile').forEach(t => t.classList.remove('active'));
   document.querySelector('[data-prelim="rams"]')?.classList.add('active');
@@ -15550,9 +15546,11 @@ function wizUpdateFinishBadge() {
   if (el) el.textContent = active.length ? active.map(t => (t.firstChild?.textContent || t.textContent).trim()).join(', ') : 'None';
 }
 function wizUpdateDeliveryBadge() {
-  const active = document.querySelector('#wiz-delivery-tiles .wiz-tile.active');
+  const active = [...document.querySelectorAll('#wiz-delivery-tiles .wiz-tile.active')];
   const el = document.getElementById('wiz-badge-delivery');
-  if (el) el.textContent = active ? (active.firstChild?.textContent || active.textContent).trim() : 'Auto';
+  if (el) el.textContent = active.length
+    ? active.map(t => (t.firstChild?.textContent || t.textContent).trim()).join(' + ')
+    : 'Auto';
 }
 function wizUpdateFixingsBadge() {
   const enabled = document.getElementById('wiz-fixings-enabled')?.checked;
@@ -15687,16 +15685,59 @@ function wizSelectDesign(el) {
   if (needsDrawings) dwizCalc(complex);
 }
 
+const WIZ_DELIVERY_RATES  = { transit:250, hiab_drop:1000, rigid:700, artic:1100, multi_drop:900 };
+const WIZ_DELIVERY_LABELS = { transit:'Transit Van', hiab_drop:'HIAB Drop', rigid:'Rigid Lorry', artic:'Articulated Lorry', multi_drop:'Multi-drop Delivery' };
+
 function wizSelectDelivery(el) {
-  document.querySelectorAll('#wiz-delivery-tiles .wiz-tile').forEach(t => t.classList.remove('active'));
-  el.classList.add('active');
-  const isManual = el.dataset.delivery !== 'auto' && el.dataset.delivery !== 'client_collect';
-  document.getElementById('wiz-delivery-manual').style.display = isManual ? '' : 'none';
-  // pre-fill rate for selected type
-  const rateMap = { transit:250, hiab_drop:1000, rigid:700, artic:1100, multi_drop:900 };
-  const rateEl = document.getElementById('wiz-delivery-rate');
-  if (rateEl && rateMap[el.dataset.delivery]) rateEl.value = rateMap[el.dataset.delivery];
+  // Vehicle tiles are MULTI-SELECT (a job often mixes e.g. artic + transit van,
+  // 2026-08-07); 'auto' and 'client_collect' stay exclusive.
+  const tiles = document.querySelectorAll('#wiz-delivery-tiles .wiz-tile');
+  const choice = el.dataset.delivery;
+  if (choice === 'auto' || choice === 'client_collect') {
+    tiles.forEach(t => t.classList.remove('active'));
+    el.classList.add('active');
+  } else {
+    document.querySelector('#wiz-delivery-tiles [data-delivery="auto"]')?.classList.remove('active');
+    document.querySelector('#wiz-delivery-tiles [data-delivery="client_collect"]')?.classList.remove('active');
+    el.classList.toggle('active');
+    // Nothing left selected -> fall back to auto
+    if (!document.querySelector('#wiz-delivery-tiles .wiz-tile.active')) {
+      document.querySelector('#wiz-delivery-tiles [data-delivery="auto"]')?.classList.add('active');
+    }
+  }
+  wizRenderDeliveryManualRows();
   wizUpdateDeliveryBadge();
+}
+
+// One loads+rate row per selected vehicle type. Existing input values are
+// preserved across rebuilds so toggling another tile doesn't wipe edits.
+function wizRenderDeliveryManualRows() {
+  const wrap = document.getElementById('wiz-delivery-manual');
+  const rowsEl = document.getElementById('wiz-delivery-manual-rows');
+  if (!wrap || !rowsEl) return;
+  const types = [...document.querySelectorAll('#wiz-delivery-tiles .wiz-tile.active')]
+    .map(t => t.dataset.delivery)
+    .filter(d => d !== 'auto' && d !== 'client_collect');
+  // Snapshot current values before rebuilding
+  const prev = {};
+  rowsEl.querySelectorAll('[data-deltype]').forEach(r => {
+    const ty = r.dataset.deltype;
+    prev[ty] = {
+      loads: r.querySelector('.wiz-del-loads')?.value,
+      rate:  r.querySelector('.wiz-del-rate')?.value
+    };
+  });
+  wrap.style.display = types.length ? '' : 'none';
+  rowsEl.innerHTML = types.map(ty => `
+    <div data-deltype="${ty}" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+      <span style="font-size:11px;color:var(--text);min-width:130px">${WIZ_DELIVERY_LABELS[ty]||ty}</span>
+      <label style="font-size:11px;color:var(--muted)">loads</label>
+      <input type="number" class="wiz-del-loads" value="${prev[ty]?.loads ?? 1}" min="1"
+        style="background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:5px 8px;color:var(--text);font-size:13px;font-family:var(--font-mono);width:60px">
+      <label style="font-size:11px;color:var(--muted)">£/load</label>
+      <input type="number" class="wiz-del-rate" value="${prev[ty]?.rate ?? (WIZ_DELIVERY_RATES[ty]||800)}" min="0"
+        style="background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:5px 8px;color:var(--text);font-size:13px;font-family:var(--font-mono);width:85px">
+    </div>`).join('');
 }
 
 function wizTogglePrelim(el) { el.classList.toggle('active'); wizUpdatePrelimsBadge(); }
@@ -16065,24 +16106,29 @@ function applyWizard() {
   });
 
   // ── Delivery ──────────────────────────────────────────────
-  const deliveryTile = document.querySelector('#wiz-delivery-tiles .wiz-tile.active');
-  const deliveryChoice = deliveryTile?.dataset.delivery || 'auto';
+  // Multi-select: each selected vehicle type contributes its own loads x rate
+  // (mixed transport, e.g. artic + transit van, is common — 2026-08-07).
+  const deliveryActive = [...document.querySelectorAll('#wiz-delivery-tiles .wiz-tile.active')].map(t => t.dataset.delivery);
   let deliveryLoads = 1;
-  if (deliveryChoice === 'client_collect') {
+  if (deliveryActive.includes('client_collect')) {
     q.deliveryRows = [];
     deliveryLoads = 0;
-  } else if (deliveryChoice === 'auto') {
+  } else if (!deliveryActive.length || deliveryActive.includes('auto')) {
     autoEstimateDelivery(q, tonnes);
     deliveryLoads = q.deliveryRows.length;
   } else {
-    const loads = parseFloat(document.getElementById('wiz-delivery-loads')?.value) || 1;
-    const rate  = parseFloat(document.getElementById('wiz-delivery-rate')?.value) || 800;
-    const labelMap = { transit:'Transit Van', hiab_drop:'HIAB Drop', rigid:'Rigid Lorry', artic:'Articulated Lorry', multi_drop:'Multi-drop Delivery' };
     q.deliveryRows = [];
-    for (let i=0; i<loads; i++) {
-      q.deliveryRows.push({ id: 'del_'+deliveryChoice+'_'+(Date.now()+i), type: deliveryChoice, label: labelMap[deliveryChoice]||'Delivery', qty: 1, rate });
-    }
-    deliveryLoads = loads;
+    deliveryLoads = 0;
+    deliveryActive.forEach(ty => {
+      const rowEl = document.querySelector(`#wiz-delivery-manual-rows [data-deltype="${ty}"]`);
+      const loads = parseFloat(rowEl?.querySelector('.wiz-del-loads')?.value) || 1;
+      const rate  = parseFloat(rowEl?.querySelector('.wiz-del-rate')?.value) ?? 0;
+      const rateV = isFinite(rate) ? rate : (WIZ_DELIVERY_RATES[ty] || 800);
+      for (let i=0; i<loads; i++) {
+        q.deliveryRows.push({ id: 'del_'+ty+'_'+(Date.now()+q.deliveryRows.length), type: ty, label: WIZ_DELIVERY_LABELS[ty]||'Delivery', qty: 1, rate: rateV });
+      }
+      deliveryLoads += loads;
+    });
   }
   // Sync logistics prelim qty to number of delivery loads
   if (deliveryLoads > 0) {
@@ -17107,6 +17153,10 @@ function syncFinishToPaintRows() {
 // ============================================================
 function filterPlantList(val) {
   const dd = document.getElementById('plantSearchDD');
+  // Any edit invalidates a previously picked item — otherwise Add would
+  // silently insert the stale selection instead of the visible text.
+  const _inp = document.getElementById('plantSearch');
+  if (_inp && _inp.dataset.selectedKey && rates.plant[_inp.dataset.selectedKey]?.label !== val) _inp.dataset.selectedKey = '';
   const q  = val.trim().toLowerCase();
   const all = Object.entries(rates.plant);
   const matches = q ? all.filter(([k,v]) => v.label.toLowerCase().includes(q) || k.includes(q)) : all;
@@ -17130,7 +17180,12 @@ function selectPlantItem(key) {
 function addPlantFromSearch() {
   const inp = document.getElementById('plantSearch');
   const key = inp.dataset.selectedKey || 'other_plant';
-  const def = rates.plant[key] || { label: inp.value || 'Plant', rate: 0 };
+  // Free-text entry (no catalogue match): keep the TYPED NAME as the label —
+  // previously it resolved to rates.plant.other_plant and the row just said
+  // "Other", silently discarding what the user wrote (2026-08-07).
+  const def = inp.dataset.selectedKey
+    ? (rates.plant[key] || { label: inp.value || 'Plant', rate: 0 })
+    : { label: (inp.value || '').trim() || 'Plant', rate: 0 };
   const q = getQuote(); if (!q) return;
   const id = 'plant_' + Date.now();
   q.plantRows = q.plantRows || [];
