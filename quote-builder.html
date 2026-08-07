@@ -7093,6 +7093,11 @@ const DEFAULT_RATES = {
     'crane_400t':        { label: '400t Heavy Mobile Crane (e.g., Liebherr LTM 1400)',        rate: 12500 },
     // Low-Level Access
     'pav_lift':          { label: 'Low-Level PAV Lift (~3.5m–4.2m WH - Pecolift/Pop-Up)',     rate: 45    },
+    // Vertical Mast / Material Lifts (Genie SLA)
+    'genie_sla10':       { label: 'Genie SLA-10 Material Lift (3m lift - panels/materials)',   rate: 80    },
+    'genie_sla15':       { label: 'Genie SLA-15 Material Lift (4.5m lift - lightweight loads)', rate: 95   },
+    'genie_sla20':       { label: 'Genie SLA-20 Material Lift (6m lift - steel/beam lifts)',   rate: 110   },
+    'genie_sla25':       { label: 'Genie SLA-25 Material Lift (7.5m lift - heavy beam/column)', rate: 125  },
     // Scissor Lifts
     'scissor_19':        { label: 'Electric Scissor 19ft (~5.8m WH - Indoor/Flat floor)',     rate: 90    },
     'scissor_26':        { label: 'Electric Scissor 26ft/32ft (~8.0m–10.0m WH - Narrow aisle)', rate: 110 },
@@ -7104,6 +7109,8 @@ const DEFAULT_RATES = {
     'boom_z60':          { label: 'Diesel Articulated Boom 60ft/80ft (~20.0m–26.0m WH)',      rate: 240   },
     'boom_tele_40_85':   { label: 'Telescopic Straight Boom 40ft–85ft (~14.0m–28.0m WH)',     rate: 210   },
     'boom_ultra_120':    { label: 'Ultra Telescopic Boom 120ft–150ft (~38.0m–47.0m WH)',      rate: 480   },
+    'cherry_12m':        { label: 'Van Mount Cherry Picker 12m (road-going)',                  rate: 160   },
+    'cherry_18m':        { label: 'Truck Mount Cherry Picker 18m+ (road-going)',               rate: 350   },
     'spider_lift':       { label: 'Tracked Spider Lift 15m–25m WH',                           rate: 350   },
     // Telehandlers & Forklifts
     'forklift_yard':     { label: 'Standard Yard Forklift – Gas/Diesel (2.5t–3.5t lift)',     rate: 120   },
@@ -7265,6 +7272,20 @@ const DEFAULT_RATES = {
 };
 
 let rates = JSON.parse(localStorage.getItem('bama_rates') || 'null') || JSON.parse(JSON.stringify(DEFAULT_RATES));
+
+// Merge-in any NEW default keys the stored blob predates (e.g. Genie SLA lifts
+// added 2026-08-07). localStorage 'bama_rates' is a wholesale snapshot — without
+// this, catalogue additions never appear for anyone who has ever saved settings.
+// Only fills gaps; user-customised values are never overwritten.
+(function mergeNewRateDefaults() {
+  Object.keys(DEFAULT_RATES).forEach(cat => {
+    if (rates[cat] == null) { rates[cat] = JSON.parse(JSON.stringify(DEFAULT_RATES[cat])); return; }
+    if (typeof DEFAULT_RATES[cat] !== 'object' || Array.isArray(DEFAULT_RATES[cat])) return;
+    Object.keys(DEFAULT_RATES[cat]).forEach(key => {
+      if (rates[cat][key] == null) rates[cat][key] = JSON.parse(JSON.stringify(DEFAULT_RATES[cat][key]));
+    });
+  });
+})();
 
 function defaultRate(category, key) {
   return rates[category]?.[key]?.rate ?? 0;
@@ -15919,7 +15940,7 @@ function applyWizard() {
       const mewpType = row.dataset.mewp;
       const mewpQty  = parseFloat(row.querySelector('.wiz-mewp-qty')?.value) || 1;
       const mewpDays = parseFloat(row.querySelector('.wiz-mewp-days')?.value) || 1;
-      const rate     = mewpRates[mewpType] || 0;
+      const rate     = rates.plant[mewpType]?.rate ?? mewpRates[mewpType] ?? 0;
       const label    = mewpLabels[mewpType] || mewpType;
       // scaffold_system: wiz-mewp-days is actually lump sum value
       if (mewpType === 'scaffold_system') {
