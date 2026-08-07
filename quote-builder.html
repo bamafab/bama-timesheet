@@ -1314,7 +1314,7 @@ tr.drag-dragging { opacity:0.35; }
                   <div class="toggle-sub">Section/length/qty/kg table on the client quote</div>
                 </div>
                 <label class="toggle">
-                  <input type="checkbox" id="showSteelSchedule" checked onchange="saveAll()">
+                  <input type="checkbox" id="showSteelSchedule" checked onchange="setShowSteelSchedule(this.checked)">
                   <span class="toggle-slider"></span>
                 </label>
               </div>
@@ -7763,6 +7763,17 @@ async function saveCurrentQuote() {
   toast('Quote saved ✓', 'success');
 }
 
+// Steel-schedule toggle: set the flag DIRECTLY on change. saveAll() alone
+// never reads the checkbox (that sync lives in saveCurrentQuote, the manual
+// Save button), so the original onchange="saveAll()" wiring meant the flag
+// never flipped and the PDF kept its schedule (2026-08-07).
+function setShowSteelSchedule(on) {
+  const q = getQuote(); if (!q) return;
+  q.showSteelSchedule = !!on;
+  saveAll();
+  toast(on ? 'Steel schedule will show on the client PDF' : 'Steel schedule hidden from the client PDF', 'success');
+}
+
 async function deleteQuote() {
   const q = getQuote(); if (!q) return;
 
@@ -8495,6 +8506,7 @@ function loadQuoteEditor() {
   document.getElementById('marginSlider').value     = q.margin ?? 20;
   document.getElementById('showDeposit').checked    = q.showDeposit || false;
   const _sssEl = document.getElementById('showSteelSchedule'); if (_sssEl) _sssEl.checked = q.showSteelSchedule !== false;
+
   document.getElementById('depositPct').value       = q.depositPct || 60;
   const _sap = document.getElementById('showAreaPdf');
   if (_sap) {
