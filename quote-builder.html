@@ -1199,7 +1199,8 @@ tr.drag-dragging { opacity:0.35; }
                 <div style="display:flex;justify-content:space-between;align-items:flex-end;margin-bottom:8px">
                   <div>
                     <div style="font-family:var(--font-mono);font-size:24px;font-weight:700;color:var(--text);line-height:1" id="sum-total-tonnes">0.000</div>
-                    <div style="font-size:10px;color:var(--muted);margin-top:2px">total tonnes</div>
+                    <div style="font-size:10px;color:var(--muted);margin-top:2px">total tonnes (incl. fittings)</div>
+                    <div style="font-size:9px;color:var(--subtle);margin-top:1px" id="sum-tonnes-fittings"></div>
                   </div>
                   <div style="text-align:right;font-size:11px;font-family:var(--font-mono);line-height:1.9">
                     <div><span style="color:var(--subtle)">UB/UC </span><span style="color:var(--text)" id="sum-tonnes-ubuc">0.000t</span></div>
@@ -6844,7 +6845,7 @@ function computeImportedTotals(quote) {
     stairFab:0, stairDesign:0, stairInstall:0, stairLabourTotal:0,
     fittingsCostVal:0, fixingsCost:0, consumablesCost:0,
     subtotal, marginAmt:0, total, totalExact: Math.round(headline*100)/100,
-    totalKg:0, totalTonnes:0, fittingsKg:0,
+    totalKg:0, totalTonnes:0, fittingsKg:0, totalKgInclFittings:0, totalTonnesInclFittings:0,
     tonnesBreakdown:{ubuc:0,pfc:0,hollow:0,other:0},
     missingKgm:[],
     costPerKgExMargin:null, costPerKgIncMargin:null, fabHrsPerTonne:null, instDaysPerTonne:null,
@@ -7065,11 +7066,18 @@ function computeQuoteTotals(quote, ratesObj) {
     totalTonnes: Math.round(totalTonnes * 1000) / 1000,
     fittingsKg: Math.round(fittingsKg * 10) / 10,
     tonnesBreakdown,
+    // Job weight INCLUDING the fittings allowance — this is what actually
+    // ships, so all £/kg and £/t PRICE metrics divide by it (2026-08-07:
+    // previously they divided by steel-only kg, overstating £/t). Productivity
+    // metrics (fab hrs/t, install days/t) stay on STEEL tonnes — they must
+    // remain comparable with the 8/12/14 hrs/t auto-fill basis.
+    totalKgInclFittings: Math.round((totalKg + fittingsKg) * 10) / 10,
+    totalTonnesInclFittings: Math.round((totalKg + fittingsKg) / 1000 * 1000) / 1000,
     // Data quality
     missingKgm,        // sections without a kg/m — costs incomplete
     // Productivity
-    costPerKgExMargin: totalKg > 0 ? Math.round(subtotal / totalKg * 100) / 100 : null,
-    costPerKgIncMargin: totalKg > 0 ? Math.round(totalExact / totalKg * 100) / 100 : null,
+    costPerKgExMargin: (totalKg + fittingsKg) > 0 ? Math.round(subtotal / (totalKg + fittingsKg) * 100) / 100 : null,
+    costPerKgIncMargin: (totalKg + fittingsKg) > 0 ? Math.round(totalExact / (totalKg + fittingsKg) * 100) / 100 : null,
     fabHrsPerTonne:    totalTonnes > 0 && fabHrsTotal  > 0 ? Math.round(fabHrsTotal  / totalTonnes * 10) / 10 : null,
     instDaysPerTonne:  totalTonnes > 0 && instDaysTotal > 0 ? Math.round(instDaysTotal / totalTonnes * 100) / 100 : null,
     // Auto-fab suggestion
@@ -14388,9 +14396,13 @@ function recalcAll() {
 
   // Tonnage breakdown box
   const _tb = C.tonnesBreakdown || {};
-  const _tt = C.totalTonnes || 0;
+  const _tt = C.totalTonnes || 0;                       // steel only (bars, hrs/t)
+  const _ttAll = C.totalTonnesInclFittings || _tt;      // job weight incl fittings
   const _setT = (id,v) => { const el=document.getElementById(id); if(el) el.textContent=v; };
-  _setT('sum-total-tonnes', _tt.toFixed(3));
+  _setT('sum-total-tonnes', _ttAll.toFixed(3));
+  _setT('sum-tonnes-fittings', (C.fittingsKg||0) > 0
+    ? `steel ${_tt.toFixed(3)}t + fittings ${((C.fittingsKg||0)/1000).toFixed(3)}t`
+    : '');
   _setT('sum-tonnes-ubuc',   (_tb.ubuc  ||0).toFixed(3)+'t');
   _setT('sum-tonnes-pfc',    (_tb.pfc   ||0).toFixed(3)+'t');
   _setT('sum-tonnes-hollow', (_tb.hollow||0).toFixed(3)+'t');
@@ -14417,7 +14429,8 @@ function recalcAll() {
   document.getElementById('sum-subtotal').textContent     = fmt(subtotal);
   document.getElementById('sum-margin').textContent       = fmt(marginAmt);
   document.getElementById('sum-total').textContent        = fmt(total);
-  document.getElementById('sum-cost-per-kg').textContent  = totalKg > 0 ? '£'+(total/totalKg).toFixed(2)+'/kg' : '—';
+  { const _kgAll = C.totalKgInclFittings || totalKg;
+    document.getElementById('sum-cost-per-kg').textContent = _kgAll > 0 ? '£'+(total/_kgAll).toFixed(2)+'/kg' : '—'; }
 
   const showDep = document.getElementById('showDeposit')?.checked;
   document.getElementById('depositSection').style.display = showDep ? '' : 'none';
@@ -14483,10 +14496,11 @@ function recalcAll() {
     updateCostBars([['Material',_na.material?0:material],['Installation',_na.installation?0:installation],['Fabrication',_na.fabrication?0:fabrication],['Design',_na.design?0:design],['Painting / Finishing',_na.painting?0:(painting+galvanising)],['Survey',_na.survey?0:survey],['Delivery',_na.delivery?0:delivery],['Prelims',_na.prelims?0:prelims]]);
     const _fh=parseFloat(document.getElementById('fab-hours')?.value)||0;
     const _id2=parseFloat(document.getElementById('inst-days')?.value)||0;
-    const _kg=totalTakeoffKg(),_t=_kg/1000;
+    const _kg=totalTakeoffKg(),_t=_kg/1000;               // steel only (hrs/t basis)
+    const _kgAll=C.totalKgInclFittings||_kg;              // £/kg divides by shipped weight
     const _sm=(id,val)=>{const el=document.getElementById(id);if(el)el.textContent=val;};
-    _sm('sum-cost-per-kg-ex',_kg>0?'£'+(subtotal/_kg).toFixed(2)+'/kg':'—');
-    _sm('sum-cost-per-kg',_kg>0?'£'+(total/_kg).toFixed(2)+'/kg':'—');
+    _sm('sum-cost-per-kg-ex',_kgAll>0?'£'+(subtotal/_kgAll).toFixed(2)+'/kg':'—');
+    _sm('sum-cost-per-kg',_kgAll>0?'£'+(total/_kgAll).toFixed(2)+'/kg':'—');
     _sm('sum-fab-per-tonne',_t>0&&_fh>0?(_fh/_t).toFixed(1)+' hrs/t':'—');
     _sm('sum-inst-per-tonne',_t>0&&_id2>0?(_id2/_t).toFixed(2)+' days/t':'—');
     ['installation','fabrication','design','painting','survey','delivery','prelims','purlins'].forEach(n=>{if((_q.blockNA||{})[n]){const el=document.getElementById('total-'+n);if(el)el.textContent='N/A';}});
