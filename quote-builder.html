@@ -1310,6 +1310,18 @@ tr.drag-dragging { opacity:0.35; }
               <hr class="divider">
               <div class="toggle-row">
                 <div>
+                  <div class="toggle-label">Steel Schedule on PDF</div>
+                  <div class="toggle-sub">Section/length/qty/kg table on the client quote</div>
+                </div>
+                <label class="toggle">
+                  <input type="checkbox" id="showSteelSchedule" checked onchange="saveAll()">
+                  <span class="toggle-slider"></span>
+                </label>
+              </div>
+
+              <hr class="divider">
+              <div class="toggle-row">
+                <div>
                   <div class="toggle-label">Show area breakdown on client quote</div>
                   <div class="toggle-sub">Adds a per-area price table to the client PDF</div>
                 </div>
@@ -7631,7 +7643,7 @@ async function newQuote() {
     structEngHours: 0, structEngRate: 90, architectHours: 0, architectRate: 90, designHours: 0, designRate: 50,
     surveyParking: 0, ralColour: '', ralFinish: 'tbc',
     purlinM: 0, purlinRate: 0,
-    margin: 20, showDeposit: false, depositPct: 60,
+    margin: 20, showDeposit: false, depositPct: 60, showSteelSchedule: true,
     showAreaPdf: false, clientAreaDetail: 'summary',
     standardLines: getDefaultStandardLines(),
     customLines: [],
@@ -7744,6 +7756,8 @@ async function saveCurrentQuote() {
   q.purlinRate     = parseFloat(document.getElementById('purlins-rate')?.value) || 0;
   q.margin         = parseFloat(document.getElementById('marginSlider')?.value) || 20;
   q.showDeposit    = document.getElementById('showDeposit')?.checked || false;
+  // Steel schedule defaults ON — missing checkbox (or legacy quote) means shown
+  q.showSteelSchedule = document.getElementById('showSteelSchedule') ? document.getElementById('showSteelSchedule').checked : (q.showSteelSchedule !== false);
   q.depositPct     = parseFloat(document.getElementById('depositPct')?.value) || 60;
   await saveAll();
   toast('Quote saved ✓', 'success');
@@ -8480,6 +8494,7 @@ function loadQuoteEditor() {
   document.getElementById('purlins-rate').value     = q.purlinRate || 0;
   document.getElementById('marginSlider').value     = q.margin ?? 20;
   document.getElementById('showDeposit').checked    = q.showDeposit || false;
+  const _sssEl = document.getElementById('showSteelSchedule'); if (_sssEl) _sssEl.checked = q.showSteelSchedule !== false;
   document.getElementById('depositPct').value       = q.depositPct || 60;
   const _sap = document.getElementById('showAreaPdf');
   if (_sap) {
@@ -19875,6 +19890,7 @@ function buildClientAreaTableHtml(q) {
 }
 
 function buildClientTakeoffHtml(q) {
+  if (q.showSteelSchedule === false) return '';   // toggle: default ON
   const rows = (q.takeoff || []).filter(r => r.type);
   if (!rows.length) return '';
 
@@ -20299,7 +20315,7 @@ function generateQuotePDF(mode = 'quote', returnHtml = false) {
         <div class="bd-total-row"><span>Sub-total</span><span>${fmtGBP(subtotal)}</span></div>
         <div class="internal-only bd-total-row" style="color:#2c3e50"><span>Margin (${margin}%)</span><span>${fmtGBP(marginAmt)}</span></div>
         <div class="bd-grand"><span>TOTAL (incl. margin)</span><span class="gv">${fmtGBP(total)}</span></div>
-        ${totalKg > 0 ? `<div class="bd-meta">Cost per kg: £${(subtotal/totalKg).toFixed(2)}/kg net &nbsp;·&nbsp; £${(total/totalKg).toFixed(2)}/kg sell</div>` : ''}
+        ${(computed.totalKgInclFittings || totalKg) > 0 ? `<div class="bd-meta">Cost per kg (incl. fittings): £${(subtotal/(computed.totalKgInclFittings||totalKg)).toFixed(2)}/kg net &nbsp;·&nbsp; £${(total/(computed.totalKgInclFittings||totalKg)).toFixed(2)}/kg sell</div>` : ''}
       </div>
     </div>
 
@@ -20643,8 +20659,10 @@ function drawClientQuotePDF(JsPDFCtor, q, logoDataUri) {
   y += 7;
 
   // ── Steel Section Schedule ─────────────────────────────────
+  // Optional: 'Steel Schedule on PDF' toggle (default ON; legacy quotes
+  // without the flag show it — only an explicit false hides it).
   const tkRows = (q.takeoff || []).filter(r => r.type);
-  if (tkRows.length) {
+  if (q.showSteelSchedule !== false && tkRows.length) {
     const rowKg = r => (r._unit === 'EA')
       ? (r.kgm || 0) * (r.qty || 1)
       : ((r.length || 0) / 1000) * (r.kgm || 0) * (r.qty || 1);
@@ -22030,7 +22048,7 @@ async function createImportedQuote() {
     structEngHours: 0, structEngRate: 90, architectHours: 0, architectRate: 90, designHours: 0, designRate: 50,
     surveyParking: 0, ralColour: '', ralFinish: 'tbc',
     purlinM: 0, purlinRate: 0,
-    margin: 0, showDeposit: false, depositPct: 60,
+    margin: 0, showDeposit: false, depositPct: 60, showSteelSchedule: true,
     showAreaPdf: false, clientAreaDetail: 'summary',
     standardLines: lines,
     customLines: [],
@@ -22430,7 +22448,7 @@ const HELP_CONTENT = {
         <div class="h-faq"><div class="h-q">Can I email the PDF directly?</div>
         <div class="h-a">Yes — click ✉ Send in the toolbar. Opens a pre-filled email with the client quote attached.</div></div>
         <div class="h-faq"><div class="h-q">Steel Section Schedule by area</div>
-        <div class="h-a">When the takeoff has rows in more than one area, the Steel Section Schedule on the client quote automatically groups members under each area name (with a per-area weight subtotal), so the client and the team can see exactly what's included where. With a single area — or no areas — it stays a flat list. The Total Steel Weight figures are unchanged either way.</div></div>
+        <div class="h-a">When the takeoff has rows in more than one area, the Steel Section Schedule on the client quote automatically groups members under each area name (with a per-area weight subtotal), so the client and the team can see exactly what's included where. With a single area — or no areas — it stays a flat list. The Total Steel Weight figures are unchanged either way. Don't want the schedule on the client PDF at all? Flip <b>Steel Schedule on PDF</b> off in the Calcs summary panel (next to the deposit toggle) — default is on, and the internal cost breakdown always keeps its own schedule regardless.</div></div>
         <div class="h-faq"><div class="h-q">Importing an old quote priced before QB</div>
         <div class="h-a">Use <strong>📥 Import old quote</strong> in the sidebar to bring a pre-QB quote into the pipeline. Drop the original PDF and AI reads the header and line totals; you can also type the basics manually. Imported quotes carry an <strong>IMPORTED</strong> badge, skip the takeoff/calc engine entirely, and take their price straight from the document — shown in an editable "Quote value" field on the Header tab and as editable line items on the Quotation tab. Filter to just these via the 📥 Imported button on the Pipeline tab. To convert a quote you already opened, use <strong>📥 Backfill from PDF</strong> in the toolbar — it marks the quote imported and fills blank fields from the PDF without overwriting anything you've already edited.</div></div>
       </div>`
@@ -22907,7 +22925,7 @@ async function qqSaveAsDraft() {
     structEngHours: 0, structEngRate: 90, architectHours: 0, architectRate: 90, designHours: 0, designRate: 50,
     surveyParking: 0, ralColour: '', ralFinish: 'tbc',
     purlinM: 0, purlinRate: 0,
-    margin: r2.margin, showDeposit: false, depositPct: 60,
+    margin: r2.margin, showDeposit: false, depositPct: 60, showSteelSchedule: true,
     standardLines: getDefaultStandardLines(),
     customLines: [],
     _qqSource: true
@@ -23058,7 +23076,7 @@ async function qqSaveAsDraft() {
         structEngHours: 0, structEngRate: 90, architectHours: 0, architectRate: 90, designHours: 0, designRate: 50,
         surveyParking: 0, ralColour: '', ralFinish: 'tbc',
         purlinM: 0, purlinRate: 0,
-        margin: 20, showDeposit: false, depositPct: 60,
+        margin: 20, showDeposit: false, depositPct: 60, showSteelSchedule: true,
         showAreaPdf: false, clientAreaDetail: 'summary',
     showAreaPdf: false, clientAreaDetail: 'summary',
         standardLines: getDefaultStandardLines(),
