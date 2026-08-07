@@ -6875,6 +6875,14 @@ function computeQuoteTotals(quote, ratesObj) {
   const missingKgm = [];
   const finishQty  = { galv_t: 0, ppc_kg: 0, primer_t: 0 };
 
+  // Fittings % resolved BEFORE the loop: each row's fittings share inherits
+  // that row's finish, so galv/primer/PPC auto-quantities reflect the weight
+  // that actually gets dipped/painted (2026-08-07 — previously steel-only,
+  // undercosting finishes by the fittings %). 0% is a legitimate value
+  // (plates already in the takeoff) — nullish checks, not ||.
+  const _fpRaw = parseFloat(quote.fittingsPct);
+  const fittingsPct  = isFinite(_fpRaw) ? _fpRaw : 10;
+
   (quote.takeoff || []).forEach(row => {
     const { kg, isValid, missing } = rowWeight(row);
     if (!isValid) { if (missing && !missingKgm.includes(missing)) missingKgm.push(missing); return; }
@@ -6885,18 +6893,16 @@ function computeQuoteTotals(quote, ratesObj) {
     } else {
       materialCost += kg * (parseFloat(row.rate) || 0);
     }
-    // finish auto-accumulation
+    // finish auto-accumulation — at DIP/PAINT weight (row + its fittings share).
+    // Excluded rows (staircase/balustrade injections) carry fittings internally.
     const fin = rowFinishType(row);
-    if (fin === 'galv')   finishQty.galv_t   += kg / 1000;
-    if (fin === 'ppc')    finishQty.ppc_kg   += kg;
-    if (fin === 'primer') finishQty.primer_t += kg / 1000;
+    const kgFin = row._excludeFromFittingsBase ? kg : kg * (1 + fittingsPct / 100);
+    if (fin === 'galv')   finishQty.galv_t   += kgFin / 1000;
+    if (fin === 'ppc')    finishQty.ppc_kg   += kgFin;
+    if (fin === 'primer') finishQty.primer_t += kgFin / 1000;
   });
 
   // Fittings (computed on fittingsBaseKg — staircase weight excluded).
-  // 0% is a legitimate value (plates already in the takeoff) — nullish
-  // checks, not ||, so an entered 0 isn't coerced back to the default.
-  const _fpRaw = parseFloat(quote.fittingsPct);
-  const fittingsPct  = isFinite(_fpRaw) ? _fpRaw : 10;
   const _frRaw = parseFloat(quote.fittingsRate);
   const fittingsRate = isFinite(_frRaw) ? _frRaw : 1.30;
   const fittingsKg   = fittingsBaseKg * (fittingsPct / 100);
@@ -6950,7 +6956,7 @@ function computeQuoteTotals(quote, ratesObj) {
     if (r.unit === 'tonnes') {
       if (r.type === 'galvanise' && finishQty.galv_t > 0)  qty = qty || finishQty.galv_t;
       else if (r.type === 'primer_tonne' && finishQty.primer_t > 0) qty = qty || finishQty.primer_t;
-      else qty = qty || (totalKg / 1000);
+      else qty = qty || ((totalKg + fittingsKg) / 1000);   // whole-job fallback = shipped weight
     }
     const cost = qty * rate;
     if (r.type === 'galvanise' || r.type === 'galvanise_spin') galvanising += cost;
