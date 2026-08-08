@@ -48608,6 +48608,114 @@ async function polFileRegister(d) {
   return blob;
 }
 
+// ── Authorised issue: the ORIGINAL policy PDF with a Document Authorisation
+// page appended (statement, director signature, dates). This is the single
+// self-contained file to upload to Constructionline / CHAS etc — the register
+// PDF alone doesn't show the authorisation ON the document. pdf-lib appends
+// as vectors, so the original pages are untouched. Only runs for PDFs and
+// only where pdf-lib is loaded (office.html); anything else skips gracefully.
+function _plWrapText(text, font, size, maxW) {
+  const words = String(text || '').split(/\s+/); const lines = []; let cur = '';
+  for (const w of words) {
+    const t = cur ? cur + ' ' + w : w;
+    if (font.widthOfTextAtSize(t, size) > maxW && cur) { lines.push(cur); cur = w; }
+    else cur = t;
+  }
+  if (cur) lines.push(cur);
+  return lines;
+}
+
+async function polFileAuthorisedIssue(d, ack) {
+  if (typeof PDFLib === 'undefined' || !PDFLib.PDFDocument) throw new Error('pdf-lib not loaded on this page');
+  if (!/\.pdf$/i.test(d.file_name || '')) throw new Error('original is not a PDF — authorised issue skipped');
+  const bytes = await omFetchPdf(d.sharepoint_file_id, d.drive_id || BAMA_DRIVE_ID);
+  const pdf = await PDFLib.PDFDocument.load(bytes, { ignoreEncryption: true });
+  const helv = await pdf.embedFont(PDFLib.StandardFonts.Helvetica);
+  const bold = await pdf.embedFont(PDFLib.StandardFonts.HelveticaBold);
+  const oblique = await pdf.embedFont(PDFLib.StandardFonts.HelveticaOblique);
+  const page = pdf.addPage([595.28, 841.89]);   // A4
+  const M = 50, W = 595.28 - 2 * M;
+  const rgb = PDFLib.rgb, ORANGE = rgb(0.878, 0.369, 0), GREY = rgb(0.42, 0.42, 0.45), INK = rgb(0.10, 0.10, 0.12);
+  let y = 792;
+
+  // Logo (best effort — aspect kept via image.scale)
+  try {
+    await loadLogoDataUri();
+    const uri = (typeof _logoDataUriCache !== 'undefined' && _logoDataUriCache) || '';
+    if (uri) {
+      const b64 = uri.split(',')[1];
+      const img = /image\/png/.test(uri) ? await pdf.embedPng(b64) : await pdf.embedJpg(b64);
+      const s = img.scale(38 / img.height);
+      page.drawImage(img, { x: M, y: y - 38, width: s.width, height: s.height });
+    }
+  } catch (_) { /* logo optional */ }
+  y -= 62;
+  page.drawText('DOCUMENT AUTHORISATION', { x: M, y, size: 17, font: bold, color: ORANGE });
+  y -= 10;
+  page.drawLine({ start: { x: M, y }, end: { x: M + W, y }, thickness: 1.2, color: ORANGE });
+  y -= 28;
+
+  const row = (label, value) => {
+    page.drawText(label, { x: M, y, size: 10, font: bold, color: GREY });
+    for (const ln of _plWrapText(value, helv, 11, W - 130)) {
+      page.drawText(ln, { x: M + 130, y, size: 11, font: helv, color: INK });
+      y -= 15;
+    }
+    y -= 5;
+  };
+  row('Document', d.title);
+  if (d.doc_ref) row('Reference', d.doc_ref);
+  row('File', d.file_name);
+  y -= 8;
+
+  for (const ln of _plWrapText(ack.statement, oblique, 11, W)) {
+    page.drawText(ln, { x: M, y, size: 11, font: oblique, color: INK });
+    y -= 15;
+  }
+  y -= 24;
+
+  // Signature box
+  page.drawRectangle({ x: M, y: y - 84, width: 250, height: 84, borderColor: GREY, borderWidth: 0.8 });
+  try {
+    const sig = await pdf.embedPng(String(ack.signature).split(',')[1]);
+    const s = sig.scale(Math.min(230 / sig.width, 66 / sig.height));
+    page.drawImage(sig, { x: M + 10, y: y - 78, width: s.width, height: s.height });
+  } catch (_) { /* box stays empty if the PNG can't embed */ }
+  const signedD = new Date(ack.acknowledged_at || Date.now());
+  let ty = y - 14;
+  const meta = [
+    ['Signed by', ack.signer_name + ' — Director'],
+    ['For and on behalf of', 'BAMA Fabrication Ltd'],
+    ['Date signed', signedD.toLocaleDateString('en-GB')],
+    ['Next review due', ack.review_due ? new Date(ack.review_due + 'T00:00:00').toLocaleDateString('en-GB') : (() => { const t = new Date(signedD); t.setMonth(t.getMonth() + POLICY_REVIEW_MONTHS); return t.toLocaleDateString('en-GB'); })()]
+  ];
+  for (const [k, v] of meta) {
+    page.drawText(k, { x: M + 270, y: ty, size: 9.5, font: bold, color: GREY });
+    page.drawText(String(v), { x: M + 370, y: ty, size: 10.5, font: helv, color: INK });
+    ty -= 17;
+  }
+  page.drawText('Signed electronically via the BAMA ERP — authorisation recorded against this file version in the document register.',
+    { x: M, y: 40, size: 8, font: helv, color: GREY });
+
+  const outBytes = await pdf.save();
+  console.log('[Authorised issue PDF] size:', outBytes.length, 'bytes');
+
+  // File it next to the original
+  const token = await getToken();
+  const drive = d.drive_id || BAMA_DRIVE_ID;
+  const metaRes = await fetch(`https://graph.microsoft.com/v1.0/drives/${drive}/items/${d.sharepoint_file_id}`,
+    { headers: { Authorization: 'Bearer ' + token } });
+  if (!metaRes.ok) throw new Error('policy file lookup ' + metaRes.status);
+  const fmeta = await metaRes.json();
+  const parentId = fmeta.parentReference && fmeta.parentReference.id;
+  if (!parentId) throw new Error('policy file has no parent folder');
+  const base = (d.title || d.file_name || 'Policy').replace(/\.pdf$/i, '');
+  const iso = signedD.toISOString().slice(0, 10);
+  const outName = `${base} — Authorised ${iso}.pdf`.replace(/[~"#%&*:<>?{|}/\\]/g, '-');
+  const up = await uploadFileToFolder(parentId, outName, outBytes.buffer.slice(outBytes.byteOffset, outBytes.byteOffset + outBytes.byteLength), 'application/pdf', drive);
+  return { name: outName, webUrl: up && up.webUrl };
+}
+
 // ── Signature register (read-and-sign, mobile Sign Policies tile) ──────────
 // Signatures are recorded against the SharePoint FILE id, so renewing a policy
 // (new file) resets the register: everyone is outstanding on the new version.
@@ -48691,7 +48799,7 @@ async function openDocSignatures(id) {
         <div id="docDirStatus" style="font-size:12px;color:var(--muted);margin-top:6px;min-height:14px"></div>
       </div>
       <div style="display:flex;gap:12px;margin-bottom:14px">${chip('Signed', _docSigRows.length, '#3ecf8e')}${chip('Outstanding (active employees)', outstanding.length, outstanding.length ? '#eab308' : '#3ecf8e')}</div>
-      <div style="font-size:11px;color:var(--muted);margin-bottom:14px">Signatures apply to this file version — renewing the document starts a fresh register. Staff sign from the mobile app → Sign Policies. Outstanding matches active employees by name against the signatures on file.</div>
+      <div style="font-size:11px;color:var(--muted);margin-bottom:14px">Signatures apply to this file version — renewing the document starts a fresh register. Director signing also files an <strong>Authorised issue</strong> PDF (the policy with the signature page appended) next to the original — that's the file to upload to Constructionline / CHAS / clients. Staff sign from the mobile app → Sign Policies. Outstanding matches active employees by name against the signatures on file.</div>
       <div style="font-weight:700;font-size:12px;letter-spacing:.4px;color:var(--accent);margin-bottom:6px">SIGNED</div>
       <div style="border:1px solid var(--border);border-radius:8px;overflow:hidden;margin-bottom:16px">${signedHtml}</div>
       <div style="font-weight:700;font-size:12px;letter-spacing:.4px;color:var(--accent);margin-bottom:8px">OUTSTANDING</div>
@@ -48751,11 +48859,22 @@ async function docDirSignSave() {
       });
       if (bump) { await api.put(`/api/company-documents/${d.id}`, { expiry_date: dueStr }); d.expiry_date = dueStr; }
     } catch (revErr) { console.warn('review-date bump failed (signature is safe):', revErr.message); }
+    // Authorised issue: the policy itself with the signature page appended —
+    // this is the ONE file to upload to Constructionline / CHAS / clients.
+    let issued = null;
+    status.textContent = 'Stamping the authorised issue…';
+    try {
+      issued = await polFileAuthorisedIssue(d, {
+        signer_name: name, signature: _docDirSigData,
+        acknowledged_at: new Date().toISOString(),
+        statement: POLICY_DIRECTOR_STATEMENT, review_due: d.expiry_date || null
+      });
+    } catch (issErr) { console.warn('authorised issue failed (signature is safe):', issErr.message); }
     status.textContent = 'Filing the register PDF…';
     try {
       await polFileRegister({ name: d.title, fileName: d.file_name, fileId: d.sharepoint_file_id, driveId: d.drive_id || null, docRef: d.doc_ref || '' });
     } catch (regErr) { console.warn('register filing failed (signature is safe):', regErr.message); }
-    toast('Policy authorised', 'success');
+    toast(issued ? `Policy authorised — signed issue filed: ${issued.name}` : 'Policy authorised (signed-issue PDF could not be generated — see console)', issued ? 'success' : 'error');
     _docDirSigData = null;
     await loadCompanyDocs();               // refresh the green/amber ✍ markers
     openDocSignatures(d.id);               // reload the modal with the new state
@@ -50103,7 +50222,7 @@ const HELP_TOPICS = [
   ]},
   { area: 'Company / Employee / Supplier Docs', icon: '📁', items: [
     { q: 'Where do insurances and policies live?', a: 'Office ▸ Company Docs. Drag PDFs in and the reader pulls out the reference, issuer and expiry for you to eyeball and save. If a drop looks like a new version of something already on the register you are offered a one-tap Renew — the old entry is archived instead of lingering as expired. Expiry reminders show on the Estimating Dashboard.' },
-    { q: 'Annual policy review / director signature', a: 'Open the ✍ on a policy in Company Docs and sign as director — the electronic signature IS the annual review, and after signing you can move the review date forward 12 months in one tap (no more editing dates in Word). The ✍ marker shows green (authorised, in date), red (annual review overdue) or amber (never signed). Staff read-and-sign from the mobile app ▸ Sign Policies.' },
+    { q: 'Annual policy review / director signature', a: 'Open the ✍ on a policy in Company Docs and sign as director — the electronic signature IS the annual review, and after signing you can move the review date forward 12 months in one tap (no more editing dates in Word). Signing also files an "— Authorised <date>.pdf" next to the original: the policy itself with a Document Authorisation page (statement, signature, dates) appended — upload THAT file to Constructionline / CHAS / clients. The ✍ marker shows green (authorised, in date), red (annual review overdue) or amber (never signed). Staff read-and-sign from the mobile app ▸ Sign Policies.' },
     { q: 'Employee documents and contracts', a: 'Office ▸ Employees ▸ Docs on a person: their register plus a contract, offer letter and new-starter sheet generator. The contract/offer wording is still a DRAFT template — check it before any real use.' },
     { q: 'Supplier approval status', a: 'Office ▸ Suppliers: each supplier has an approval status (approved / conditional / suspended) with a review-due date, plus a document area for their insurances and quality certs.' },
   ]},

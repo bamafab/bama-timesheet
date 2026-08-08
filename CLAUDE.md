@@ -753,6 +753,16 @@ mark-fabricated step). Migration: `api/sql/add-staged-fabrication.sql`.
   the "Natasza uploads the newly signed H&S policy, old one lingers as
   EXPIRED" trap. Supersede failure after a successful save downgrades to a
   toast telling the user to archive manually.
+- **Authorised issue PDF (`polFileAuthorisedIssue`).** Director signing files
+  a second output next to the register: the ORIGINAL policy PDF with an A4
+  "Document Authorisation" page appended via pdf-lib (statement, embedded
+  signature PNG, signed-by/date/next-review, logo best-effort) — named
+  `<title> — Authorised YYYY-MM-DD.pdf`, filed in the policy's own folder.
+  This is the self-contained file for Constructionline/CHAS/clients; the
+  register PDF alone doesn't show the authorisation ON the document. PDFs
+  only, requires pdf-lib on the page (office.html has it); every failure is
+  non-fatal — the DB signature is always recorded first. Word-wrap helper
+  `_plWrapText` (pdf-lib has no splitTextToSize).
 - **`_docDirAuth` now keeps the NEWEST signature per file** — the
   acknowledgements list is ORDER BY acknowledged_at DESC, so first hit wins
   (previous code let the oldest overwrite, which would have broken staleness).
