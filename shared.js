@@ -33596,6 +33596,30 @@ async function advanceBabcockQuoteStatus(id) {
 // matches the names 1:1. The mapping below is what's authoritative.
 // New order: Project Complete → Bama SW PO → Bama SW Invoice → Approved
 // to Pay → Payment Received → Paid to Bama SW → Remittance → Closed.
+// ── Babcock payment-cascade toast ───────────────────────────────────────
+// Payment endpoints (sales invoice payments, supplier payment runs, supplier
+// invoice mark-paid) return a `babcock` result when the invoice is linked to
+// a Babcock job — see api/src/babcock-cascade.js. Surface it to Natasza:
+//   advanced → success toast (+ patch local tracker cache if loaded)
+//   skipped  → warning toast — tracker was NOT at the expected step, needs
+//              a manual look on the Babcock tracker
+//   noop/null → silent
+function babcockCascadeToast(result) {
+  const list = Array.isArray(result) ? result : (result ? [result] : []);
+  for (const r of list) {
+    if (!r || !r.action) continue;
+    if (r.action === 'advanced') {
+      toast(`Babcock tracker: ${r.quote_ref} → ${r.to} ✓`, 'success');
+      if (typeof _babcockQuotes !== 'undefined' && Array.isArray(_babcockQuotes)) {
+        const row = _babcockQuotes.find(x => x.quote_ref === r.quote_ref);
+        if (row) row.status = r.to;
+      }
+    } else if (r.action === 'skipped') {
+      toast(`Babcock tracker NOT updated — ${r.quote_ref} is at "${r.status}" (expected "${r.expected}"). Advance it manually on the Babcock tracker.`, 'warning');
+    }
+  }
+}
+
 const _babcockAdvanceHandlers = {
   'Quote Received':   handleAdvanceFromQuoteReceived,
   'Quote Sent':       handleAdvanceFromQuoteSent,         // 1f
@@ -41467,6 +41491,7 @@ async function confirmBacsRun() {
     });
     const run = res.run || {};
     const invoices = res.invoices || sel;
+    babcockCascadeToast(res.babcock);
 
     _bacsDownloadCsv(run, invoices);
 
@@ -41657,6 +41682,7 @@ async function confirmPayRemit() {
       invoice_ids: sel.map(inv => inv.id),
       notes: `Pay & Remit — ${supplierName}`
     });
+    babcockCascadeToast(runRes && runRes.babcock);
 
     // 3. Upload the remittance to SharePoint (non-fatal — fall back to a tab)
     let spOk = false;
@@ -45430,8 +45456,9 @@ async function saveInvPayment() {
     toast('Enter a valid date and amount', 'error'); return;
   }
   try {
-    await api.post(`/api/invoices/${_invDetailCurrent.id}/payments`, payload);
+    const payRes = await api.post(`/api/invoices/${_invDetailCurrent.id}/payments`, payload);
     toast('Payment recorded ✓', 'success');
+    babcockCascadeToast(payRes && payRes.babcock);
     closeRecordPaymentModal();
     // Refresh detail + list
     await openInvoiceDetail(_invDetailCurrent.id);

@@ -47,6 +47,7 @@ const { requireAuth } = require('../auth');
 const { query } = require('../db');
 const { logChange } = require('../changelog');
 const { ok, created, badRequest, notFound, serverError, preflight } = require('../responses');
+const { advanceBabcockOnPayment } = require('../babcock-cascade');
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Reference allocators
@@ -1478,7 +1479,7 @@ app.http('invoices-payment-add', {
             const body = await request.json();
             const createdBy = auth.email || auth.name || null;
 
-            const inv = await query('SELECT gross_amount, status FROM Invoices WHERE id = @id', { id });
+            const inv = await query('SELECT gross_amount, status, kind, project_id FROM Invoices WHERE id = @id', { id });
             if (!inv.recordset.length) return notFound('Invoice not found', request);
             if (inv.recordset[0].status === 'Void' || inv.recordset[0].status === 'Cancelled') {
                 return badRequest('Cannot add payment to a voided/cancelled invoice', request);
@@ -1523,7 +1524,26 @@ app.http('invoices-payment-add', {
                 { id, outstanding, status: newStatus }
             );
 
-            return ok({ id, total_paid: totalPaid, total_outstanding: outstanding, status: newStatus }, request);
+            // ── Babcock cascade (sales side) ──────────────────────────────────
+            // Invoice on a Babcock (BC) project just became fully Paid ⇒ mirror
+            // to the Babcock tracker: 'Approved to Pay' → 'Payment Received'.
+            // Strict + one-way + non-fatal — see api/src/babcock-cascade.js.
+            let babcock = null;
+            if (newStatus === 'Paid' && inv.recordset[0].status !== 'Paid' &&
+                inv.recordset[0].kind === 'invoice' && inv.recordset[0].project_id) {
+                try {
+                    const pr = await query(
+                        'SELECT source_babcock_quote_id FROM Projects WHERE id = @pid',
+                        { pid: inv.recordset[0].project_id }
+                    );
+                    const bqId = pr.recordset[0]?.source_babcock_quote_id;
+                    if (bqId) babcock = await advanceBabcockOnPayment('sales', bqId, body.payment_date);
+                } catch (e) {
+                    context.error('Babcock sales cascade failed (non-fatal):', e);
+                }
+            }
+
+            return ok({ id, total_paid: totalPaid, total_outstanding: outstanding, status: newStatus, babcock }, request);
         } catch (err) {
             context.error('Error adding payment:', err);
             return serverError('Failed to add payment: ' + err.message, request);

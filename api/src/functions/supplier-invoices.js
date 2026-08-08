@@ -2,6 +2,7 @@ const { app } = require('@azure/functions');
 const { query } = require('../db');
 const { requireAuth } = require('../auth');
 const { ok, created, badRequest, notFound, serverError, preflight } = require('../responses');
+const { advanceBabcockOnPayment } = require('../babcock-cascade');
 
 // ═══════════════════════════════════════════════════════════════════════════
 // SUPPLIER INVOICES LEDGER
@@ -523,8 +524,25 @@ app.http('supplier-invoices-update', {
 
             for (const pid of affectedPos) await recomputePoReconciliation(pid);
 
+            // ── Babcock cascade (Bama SW paid) ── paid_at just went NULL→value on
+            // a Babcock-linked, non-credit invoice ⇒ advance the tracker
+            // 'Payment Received' → 'Paid to Bama SW'. Strict + one-way + non-fatal.
+            let babcock = null;
+            if (body.paid_at && !inv.paid_at && Number(inv.gross || 0) >= 0) {
+                const bqId = body.babcock_quote_id !== undefined
+                    ? (body.babcock_quote_id ? parseInt(body.babcock_quote_id) : null)
+                    : inv.babcock_quote_id;
+                if (bqId) {
+                    try {
+                        babcock = await advanceBabcockOnPayment('bamasw', bqId, body.paid_at);
+                    } catch (e) {
+                        context.error('Babcock cascade failed (non-fatal):', e);
+                    }
+                }
+            }
+
             const r = await query(LIST_SELECT + ' AND si.id = @id', { id });
-            return ok(r.recordset[0], request);
+            return ok({ ...r.recordset[0], babcock }, request);
         } catch (err) {
             context.error('supplier-invoices update failed:', err);
             return serverError('Failed to update supplier invoice: ' + err.message, request);
@@ -858,8 +876,27 @@ app.http('supplier-payment-runs-create', {
                 }
             );
 
+            // ── Babcock cascade (Bama SW paid) ────────────────────────────
+            // Any Babcock-linked invoice in this run ⇒ advance the tracker
+            // 'Payment Received' → 'Paid to Bama SW'. Credit notes (gross < 0)
+            // never advance. Strict + one-way + non-fatal — see
+            // api/src/babcock-cascade.js.
+            const babcock = [];
+            try {
+                const bqInvs = await query(
+                    `SELECT id, babcock_quote_id, gross FROM SupplierInvoices
+                      WHERE id IN (${idList}) AND babcock_quote_id IS NOT NULL`);
+                for (const row of bqInvs.recordset) {
+                    if (Number(row.gross || 0) < 0) continue;
+                    const r = await advanceBabcockOnPayment('bamasw', row.babcock_quote_id, body.run_date);
+                    if (r) babcock.push(r);
+                }
+            } catch (e) {
+                context.error('Babcock cascade failed (non-fatal):', e);
+            }
+
             const invoices = await query(LIST_SELECT + ` AND si.id IN (${idList})`);
-            return created({ run, invoices: invoices.recordset }, request);
+            return created({ run, invoices: invoices.recordset, babcock }, request);
         } catch (err) {
             context.error('payment-run create failed:', err);
             return serverError('Failed to create payment run: ' + err.message, request);

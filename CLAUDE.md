@@ -107,6 +107,19 @@ management, and a standalone UK steel section reference.
   `editQuotes` permissions. Staff with only `tenders` permission must not see
   any monetary information. Always confirm with the user before adding any new
   info display to the Tender page or Tender list.
+- **Babcock payment cascade (2026-08-08).** Marking money movements in
+  the invoicing ledgers now mirrors onto the Babcock tracker via
+  `api/src/babcock-cascade.js` (`advanceBabcockOnPayment`):
+  sales invoice on a BC project fully Paid ⇒ 'Approved to Pay' →
+  'Payment Received' (+payment_received_at); Babcock-linked supplier
+  invoice marked paid (payment run or PUT paid_at) ⇒ 'Payment Received'
+  → 'Paid to Bama SW' (+bama_sw_paid_at). STRICT: only fires from the
+  exact prior step — earlier statuses return action:'skipped' and the
+  frontend (`babcockCascadeToast` in shared.js) shows a warning toast;
+  at/past target = silent noop. Credit notes (gross < 0) never advance.
+  ONE-WAY: un-paying never rolls the tracker back. Non-fatal: cascade
+  failure never fails the payment write. The old note that financial
+  cascades are "Babcock-tracker-only" is superseded.
 - **Babcock ↔ Project Tracker status cascade.** When a Babcock-linked
   Project (i.e. `Projects.source_babcock_quote_id` is set) is updated to
   `status = 'Complete'` via `PUT /api/projects/:id`, the API also advances
