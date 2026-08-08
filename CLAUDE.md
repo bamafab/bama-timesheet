@@ -449,6 +449,10 @@ Core tables:
     `won`. `source_quote_id` FKs to the originating `Tenders` row.
   - **`BC######`** — Babcock projects converted from a won Babcock
     Quote (`BQ###` → `BC###`). Created via the Babcock cascade flow.
+    SharePoint: BC folders live in `06 - Projects/<year>/01 - Babcock/`
+    (spBabcockProjectParent), not directly in the year folder — applies
+    to both the BQ→BC conversion and BC-numbered manual projects
+    (Mateusz 2026-08-08).
   - **`S####`** — legacy / pre-ERP project references (e.g. `S1965 -
     Brookhurst Farm`, `S1982`, `S1998`). Imported manually or carried
     over from the spreadsheet era; no `source_quote_id`. Still appear

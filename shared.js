@@ -11218,6 +11218,14 @@ async function spNewProjectParent() {
   return await getOrCreateSubfolder(SP_TAX.projects, spYearName(), BAMA_DRIVE_ID);
 }
 
+// Parent for NEW Babcock (BC-prefixed) project folders:
+// 06 - Projects / <NN - year> / 01 - Babcock (auto-created). Keeps Babcock
+// jobs grouped instead of interleaved with C-prefixed BAMA projects.
+async function spBabcockProjectParent() {
+  const yearFolder = await spNewProjectParent();
+  return await getOrCreateSubfolder(yearFolder.id, '01 - Babcock', BAMA_DRIVE_ID);
+}
+
 // Element folder names (auto-created inside each job folder).
 // Order matters — createJob() iterates Object.values() to create folders
 // in declaration order. The seDrawings folder is the draftsman's private
@@ -29492,7 +29500,11 @@ async function submitCreateProject() {
     if (!isExistingLegacyProject) {
       try {
         const token = await getToken();
-        const projectsRoot = await spNewProjectParent();   // D0: 06 - Projects/<year>
+        // BC-prefixed (Babcock) projects live in <year>/01 - Babcock; everything
+        // else sits directly in the year folder.
+        const projectsRoot = /^BC/i.test(projectNumber)
+          ? await spBabcockProjectParent()
+          : await spNewProjectParent();
         const clientPart  = sanitiseFolderSegment(companyName);
         const projectPart = sanitiseFolderSegment(projectName);
         const folderName  = [projectNumber, clientPart, projectPart].filter(Boolean).join(' - ');
@@ -33939,11 +33951,11 @@ async function convertBabcockQuoteToProject(q, opts) {
   const woPart      = sanitiseFolderSegment(q.work_order_no || projectName);
   const folderName  = [projectNumber, custPart, woPart].filter(Boolean).join(' - ');
 
-  // 1. Create SharePoint folders. Projects sit under the Projects/ root,
-  //    same as the tender-side conversion — no separate Babcock projects
-  //    folder, the BC prefix is the differentiator.
+  // 1. Create SharePoint folders. Babcock projects get their own subfolder
+  //    inside the year folder: 06 - Projects / <year> / 01 - Babcock / BC…
+  //    (Mateusz 2026-08-08 — keeps BC jobs out of the main project list).
   const token = await getToken();
-  const projectsRoot = await spNewProjectParent();   // D0: 06 - Projects/<year>
+  const projectsRoot = await spBabcockProjectParent();   // <year>/01 - Babcock
   const projectFolder = await createFolderInDrive(projectsRoot.id, folderName);
 
   // Create the standard 9 subfolders
