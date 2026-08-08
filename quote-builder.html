@@ -11874,6 +11874,11 @@ function renderTakeoff() {
             ondrop="onAreaDrop(event,'${areaId}')"
             data-area-id="${areaId||'__unspec__'}">
             <span class="area-header-chevron">▾</span>
+            <input type="checkbox" class="area-select-cb" data-area="${areaId||'__unspec__'}"
+              onclick="event.stopPropagation()"
+              onchange="toggleAreaSelect('${areaId}', this.checked)"
+              title="Select every row in this area"
+              style="cursor:pointer;accent-color:var(--accent);margin:0 2px">
             ${isUnspec
               ? `<span class="area-header-name" style="color:var(--muted);font-style:italic">Unspecified</span>`
               : `<input class="area-name-input" value="${escHtml(areaName)}"
@@ -11965,7 +11970,7 @@ function takeoffRowHTML(row, i, inSub) {
       <span class="drag-handle" title="Drag to reorder">⠿</span>
     </td>
     <td style="text-align:center;padding:4px 2px">
-      <input type="checkbox" class="takeoff-cb" data-idx="${i}"
+      <input type="checkbox" class="takeoff-cb" data-idx="${i}" data-area="${escHtml(row.area||'__unspec__')}"
         onchange="onTakeoffCheck()" onclick="onCbClick(event,${i})" style="cursor:pointer;accent-color:var(--accent)">
     </td>
     <td style="padding:3px 4px"><div class="ac-wrap" id="ac-wrap-${i}">
@@ -12462,17 +12467,70 @@ function onTakeoffCheck() {
     const row = document.getElementById('takeoff-row-' + cb.dataset.idx);
     if (row) row.style.background = cb.checked ? 'rgba(255,107,0,0.08)' : '';
   });
+  // sync each area-header checkbox: checked = all its rows selected,
+  // indeterminate = some. Collapsed areas render no row checkboxes, so
+  // their header box simply clears (selection is checkbox-driven).
+  document.querySelectorAll('.area-select-cb').forEach(acb => {
+    const areaCbs = [...cbs].filter(c => c.dataset.area === acb.dataset.area);
+    const n = areaCbs.filter(c => c.checked).length;
+    acb.checked = areaCbs.length > 0 && n === areaCbs.length;
+    acb.indeterminate = n > 0 && n < areaCbs.length;
+  });
+}
+
+// One-click select of every row in one area (header checkbox). Selection is
+// checkbox-driven, and collapsed areas render no row checkboxes — so selecting
+// a collapsed area expands it first (preserving any selection already made in
+// other areas across the rerender), then ticks its rows.
+function toggleAreaSelect(areaId, checked) {
+  const q = getQuote(); if (!q) return;
+  const key = areaId || '';
+  if (checked) {
+    let expanded = false;
+    if (key === '') {
+      if (q._unspecCollapsed) { q._unspecCollapsed = false; expanded = true; }
+    } else {
+      const a = (q.areas||[]).find(a => a.id === key);
+      if (a && a.collapsed) { a.collapsed = false; expanded = true; }
+    }
+    (q.subareas||[]).forEach(s => {
+      if (s.areaId === key && s.collapsed) { s.collapsed = false; expanded = true; }
+    });
+    if (expanded) {
+      const prev = new Set([...document.querySelectorAll('.takeoff-cb:checked')].map(cb => cb.dataset.idx));
+      saveAll(); renderTakeoff();
+      prev.forEach(idx => {
+        const cb = document.querySelector('.takeoff-cb[data-idx="' + idx + '"]');
+        if (cb) cb.checked = true;
+      });
+    }
+  }
+  const dataKey = key || '__unspec__';
+  document.querySelectorAll('.takeoff-cb').forEach(cb => {
+    if (cb.dataset.area === dataKey) cb.checked = checked;
+  });
+  onTakeoffCheck();
 }
 
 function toggleSelectAllTakeoff(checked) {
+  // Master select-all covers EVERYTHING — expand any collapsed areas first so
+  // no rows silently escape the selection (bulk delete/move act on checkboxes).
+  const q = getQuote();
+  if (checked && q) {
+    let expanded = false;
+    if (q._unspecCollapsed) { q._unspecCollapsed = false; expanded = true; }
+    (q.areas||[]).forEach(a => { if (a.collapsed) { a.collapsed = false; expanded = true; } });
+    (q.subareas||[]).forEach(s => { if (s.collapsed) { s.collapsed = false; expanded = true; } });
+    if (expanded) { saveAll(); renderTakeoff(); }
+  }
   document.querySelectorAll('.takeoff-cb').forEach(cb => { cb.checked = checked; });
   onTakeoffCheck();
 }
 
 function selectAllTakeoff() {
-  document.querySelectorAll('.takeoff-cb').forEach(cb => { cb.checked = true; });
-  document.getElementById('takeoffSelectAll').checked = true;
-  onTakeoffCheck();
+  toggleSelectAllTakeoff(true);
+  const master = document.getElementById('takeoffSelectAll');
+  if (master) master.checked = true;
 }
 
 function deselectAllTakeoff() {
@@ -22076,6 +22134,7 @@ const HELP_CONTENT = {
           <li><span class="h-step-num">3</span><div>Set material rate (£/kg) — defaults to global steel price.</div></li>
           <li><span class="h-step-num">4</span><div>Set <strong>Finish</strong>: Galvanised, Primer, Powder Coat, or None — feeds galvanising tonnage in Calcs automatically.</div></li>
           <li><span class="h-step-num">5</span><div>Use <strong>Areas</strong> to group members by location (Ground Floor, Mezzanine, Roof).</div></li>
+          <li><span class="h-step-num">5b</span><div><strong>Selecting rows:</strong> tick individual row checkboxes, use the checkbox on any <strong>area header</strong> (including Unspecified) to select that whole area in one click, or the master checkbox in the table header to select everything. Selecting a collapsed area expands it first so nothing escapes the selection — then use the bulk bar to move, delete, or select same-type.</div></li>
           <li><span class="h-step-num">6</span><div><strong>PlanSwift Import is always additive</strong> — it only ever adds rows; your existing takeoff is never overwritten or merged. Pick an existing area, type a new area name, or leave it on "Use areas from file". If a second import would put identical members (same section + length) into an area that already has them, or the file's area names match existing areas, you get a warning first — so two separate takeoffs never get silently compiled into one.</div></li>
           <li><span class="h-step-num">7</span><div><strong>IFC Import (⧉) reads the whole takeoff from a model.</strong> When the job comes with an <span class="h-kbd">.ifc</span> file, drop it in and every beam, column and member is read out — section, length and quantity — grouped by floor level, in seconds. No Tekla needed. Sizes come straight from the model; weights and rates from your steel database. Review the preview, then import (additive, same as PlanSwift). Anything the database doesn't recognise is flagged ⚠ so you can fix the section after import.</div></li>
           <li><span class="h-step-num">7b</span><div><strong>Plate & bracket models work too (CATIA / SolidWorks exports).</strong> If the IFC has no beams or columns — just solid parts, like a machined bracket or plate assembly — QB switches to <em>parts mode</em>: every solid's weight is measured exactly from its own geometry (mesh volume × 7850 kg/m³) and imported as EA pieces with kg-each. Identical parts group into a quantity, plates are recognised and named PLT t × w × l, and the assembly name becomes the area. No redrawing needed — the model is the takeoff.</div></li>
