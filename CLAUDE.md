@@ -734,6 +734,29 @@ mark-fabricated step). Migration: `api/sql/add-staged-fabrication.sql`.
   production, `SQL_CONNECTION_STRING`, `AZURE_TENANT_ID`, `AZURE_CLIENT_ID` come
   from App Settings on the Function App. Never commit real secrets.
 
+### Office / Company Docs session notes (2026-08-08, afternoon)
+
+- **Policy annual review = director e-signature.** `POLICY_REVIEW_MONTHS = 12`
+  in shared.js. `docDirAuthState(fileId)` classifies the latest director
+  signature per file as ok / stale (>12 months) / none. Table ✍ marker is
+  three-state (green / red / amber); register modal shows a red "Annual review
+  overdue" banner with a prominent Re-sign button. After `docDirSignSave`
+  records the signature, a bamaConfirm offers to bump the doc's
+  review/expiry_date to today +12 months (one tap, replaces editing dates in
+  Word). Bump failure is non-fatal — the signature is always safe.
+- **Dropzone renewal detection (docSaveCard).** Before saving a dragged-in
+  doc, active `_docRows` are scanned for an older version: normalized doc_ref
+  match, or same category + normalized-title equality/containment (title >6
+  chars). Match → bamaConfirm offers Renew (POST new + PUT old
+  `{is_archived:1, superseded_by}` — same mechanics as the 🔁 button,
+  reversible from Show archived). Cancel saves as a separate document. Fixes
+  the "Natasza uploads the newly signed H&S policy, old one lingers as
+  EXPIRED" trap. Supersede failure after a successful save downgrades to a
+  toast telling the user to archive manually.
+- **`_docDirAuth` now keeps the NEWEST signature per file** — the
+  acknowledgements list is ORDER BY acknowledged_at DESC, so first hit wins
+  (previous code let the oldest overwrite, which would have broken staleness).
+
 ### QB session notes (2026-08-08)
 
 - **Handover Pack is THE internal document.** The old standalone Cost Breakdown

@@ -48328,12 +48328,29 @@ async function docSaveCard(i) {
   if (!q || q.state === 'saving') return;
   const p = q.parsed || {};
   if (!p.title || !String(p.title).trim()) { toast('Title is required', 'error'); return; }
+  // Renewal detection: does an ACTIVE register entry look like an older
+  // version of this document? (same ref, or same category + matching title)
+  // Prevents the "new signed policy saved alongside the old expired one" trap.
+  const _dn = s => String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+  const nt = _dn(p.title);
+  const prev = (_docRows || []).find(r => !r.is_archived && (
+    (p.doc_ref && r.doc_ref && _dn(r.doc_ref) === _dn(p.doc_ref)) ||
+    (r.category === p.category && nt.length > 6 && (_dn(r.title) === nt || _dn(r.title).includes(nt) || nt.includes(_dn(r.title))))));
+  let renewId = null;
+  if (prev) {
+    const exp = docExpiryInfo(prev);
+    const renew = await bamaConfirm({
+      title: 'New version of an existing document?', icon: '🔁', confirmText: '🔁 Renew',
+      body: `This looks like a new version of <strong>${escapeHtml(prev.title)}</strong>${prev.expiry_date ? ` (${exp.cls === 'expired' ? 'EXPIRED ' : 'expires '}${new Date(prev.expiry_date + 'T00:00:00').toLocaleDateString('en-GB')})` : ''}.<br><span style="color:var(--muted);font-size:12px">Renew files this version and archives the old entry (reversible from Show archived). Cancel saves it as a separate document.</span>`
+    });
+    if (renew) renewId = prev.id;
+  }
   q.state = 'saving'; _renderDocCards();
   try {
     const folder = await docTargetFolder(p.category, p.issue_date);
     const up = await uploadFileToFolder(folder.id, q.file.name, await q.file.arrayBuffer(),
                                         q.file.type || 'application/octet-stream', BAMA_DRIVE_ID);
-    await api.post('/api/company-documents', {
+    const res = await api.post('/api/company-documents', {
       category: p.category, title: String(p.title).trim(),
       doc_ref: p.doc_ref || null, issuer: p.issuer || null,
       issue_date: p.issue_date || null, expiry_date: p.expiry_date || null,
@@ -48341,8 +48358,12 @@ async function docSaveCard(i) {
       file_name: q.file.name, sharepoint_file_id: up.id,
       drive_id: BAMA_DRIVE_ID, web_url: up.webUrl || null
     });
+    if (renewId) {
+      try { await api.put(`/api/company-documents/${renewId}`, { is_archived: 1, superseded_by: res.id }); }
+      catch (supErr) { console.warn('supersede failed (new doc is saved):', supErr.message); toast('Saved, but archiving the old version failed — archive it manually', 'error'); renewId = null; }
+    }
     q.state = 'done';
-    toast(`Saved — ${p.title}`, 'success');
+    toast(renewId ? `Renewed — ${p.title} (previous version archived)` : `Saved — ${p.title}`, 'success');
     _renderDocCards();
     loadCompanyDocs();
   } catch (err) {
@@ -48367,7 +48388,7 @@ async function loadCompanyDocs() {
     try {
       const dirs = await api.get('/api/acknowledgements?doc_type=policy_director');
       _docDirAuth = {};
-      (dirs || []).forEach(a => { if (a.doc_file_id) _docDirAuth[a.doc_file_id] = a; });
+      (dirs || []).forEach(a => { if (a.doc_file_id && !_docDirAuth[a.doc_file_id]) _docDirAuth[a.doc_file_id] = a; });   // list is DESC → first hit per file is the newest signature
     } catch (_) { _docDirAuth = {}; }
     renderDocChips(); renderDocTable();
   } catch (e) {
@@ -48381,6 +48402,17 @@ function docExpiryInfo(d) {
   if (days < 0)  return { cls: 'expired', days, badge: `<span style="background:#3b1a1a;color:#ff6b6b;border:1px solid #ff6b6b;border-radius:5px;padding:2px 7px;font-size:11px;font-weight:700">EXPIRED ${-days}d ago</span>`, sort: days };
   if (days <= (d.reminder_days ?? 60)) return { cls: 'soon', days, badge: `<span style="background:#3b2f0f;color:#eab308;border:1px solid #eab308;border-radius:5px;padding:2px 7px;font-size:11px;font-weight:700">${days} days left</span>`, sort: days };
   return { cls: 'ok', days, badge: `<span style="color:#3ecf8e;font-size:11.5px">✓ ${days}d</span>`, sort: days };
+}
+
+// Director authorisation review cycle: a director signature is the annual
+// review and is valid for 12 months, after which the policy must be re-signed.
+const POLICY_REVIEW_MONTHS = 12;
+function docDirAuthState(fileId) {
+  const a = fileId && _docDirAuth[fileId];
+  if (!a) return { cls: 'none' };
+  const signed = new Date(a.acknowledged_at);
+  const due = new Date(signed); due.setMonth(due.getMonth() + POLICY_REVIEW_MONTHS);
+  return { cls: due < new Date() ? 'stale' : 'ok', signed, due, ack: a };
 }
 
 function renderDocChips() {
@@ -48410,6 +48442,7 @@ function renderDocTable() {
     const exp = docExpiryInfo(d);
     const zebra = i % 2 ? 'background:rgba(255,255,255,0.018);' : '';
     const arch = d.is_archived ? 'opacity:.45;' : '';
+    const dir = docDirAuthState(d.sharepoint_file_id);
     const titleCell = d.web_url
       ? `<a href="${escapeHtml(d.web_url)}" target="_blank" style="color:var(--text);text-decoration:underline dotted">${escapeHtml(d.title)}</a>`
       : escapeHtml(d.title);
@@ -48422,7 +48455,7 @@ function renderDocTable() {
       <td style="padding:7px 10px;border-bottom:1px solid var(--border);font-size:11.5px">${d.expiry_date || '—'}</td>
       <td style="padding:7px 10px;border-bottom:1px solid var(--border)">${exp.badge}</td>
       <td style="padding:7px 10px;border-bottom:1px solid var(--border);text-align:right;white-space:nowrap">
-        ${DOC_SIGNABLE.includes(d.category) && d.sharepoint_file_id ? `<button class="btn btn-ghost btn-sm" onclick="openDocSignatures(${d.id})" title="${_docDirAuth[d.sharepoint_file_id] ? 'Director-authorised — signature register' : 'NOT director-authorised — signature register'}" style="${_docDirAuth[d.sharepoint_file_id] ? 'color:#3ecf8e' : 'color:#eab308'}">✍</button>` : ''}
+        ${DOC_SIGNABLE.includes(d.category) && d.sharepoint_file_id ? `<button class="btn btn-ghost btn-sm" onclick="openDocSignatures(${d.id})" title="${dir.cls === 'ok' ? 'Director-authorised ' + dir.signed.toLocaleDateString('en-GB') + ' — annual review due ' + dir.due.toLocaleDateString('en-GB') : dir.cls === 'stale' ? 'Annual review OVERDUE — director last signed ' + dir.signed.toLocaleDateString('en-GB') : 'NOT director-authorised — signature register'}" style="color:${dir.cls === 'ok' ? '#3ecf8e' : dir.cls === 'stale' ? '#ff6b6b' : '#eab308'}">✍</button>` : ''}
         ${d.is_archived
           ? `<button class="btn btn-ghost btn-sm" onclick="unarchiveDoc(${d.id})" title="Restore">↩</button>`
           : `<button class="btn btn-ghost btn-sm" onclick="renewDoc(${d.id})" title="Renew — new version in, this one archived">🔁</button>
@@ -48624,13 +48657,22 @@ async function openDocSignatures(id) {
     const outHtml = outstanding.length
       ? outstanding.map(e => `<span style="display:inline-block;background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:3px 11px;margin:0 6px 6px 0;font-size:12px">${escapeHtml(e.name)}</span>`).join('')
       : '<div style="color:#3ecf8e;padding:4px 0">✓ Every active employee has signed this version.</div>';
+    const _authDue = dirAuth ? (() => { const t = new Date(dirAuth.acknowledged_at); t.setMonth(t.getMonth() + POLICY_REVIEW_MONTHS); return t; })() : null;
+    const _authOverdue = _authDue && _authDue < new Date();
     const authHtml = dirAuth
-      ? `<div style="display:flex;align-items:center;gap:10px;background:rgba(62,207,142,.08);border:1px solid #3ecf8e;border-radius:8px;padding:10px 14px;margin-bottom:14px">
+      ? (_authOverdue
+        ? `<div style="display:flex;align-items:center;gap:10px;background:rgba(255,107,107,.08);border:1px solid #ff6b6b;border-radius:8px;padding:10px 14px;margin-bottom:14px">
+           <span style="font-size:18px">⏰</span>
+           <div style="flex:1"><div style="font-weight:700;color:#ff6b6b">Annual review overdue</div>
+           <div style="font-size:12px;color:var(--muted)">Last signed by <strong>${escapeHtml(dirAuth.signer_name)}</strong> (Director) on ${new Date(dirAuth.acknowledged_at).toLocaleDateString('en-GB')} — review was due ${_authDue.toLocaleDateString('en-GB')}. Re-sign to renew the authorisation.</div></div>
+           <button class="btn btn-sm" style="background:var(--accent);color:#111;font-weight:700" onclick="docDirSignStart()">✍ Re-sign now</button>
+         </div>`
+        : `<div style="display:flex;align-items:center;gap:10px;background:rgba(62,207,142,.08);border:1px solid #3ecf8e;border-radius:8px;padding:10px 14px;margin-bottom:14px">
            <span style="font-size:18px">✅</span>
            <div style="flex:1"><div style="font-weight:700;color:#3ecf8e">Authorised for issue</div>
-           <div style="font-size:12px;color:var(--muted)">Signed by <strong>${escapeHtml(dirAuth.signer_name)}</strong> (Director) on ${new Date(dirAuth.acknowledged_at).toLocaleDateString('en-GB')} — applies to this file version.</div></div>
+           <div style="font-size:12px;color:var(--muted)">Signed by <strong>${escapeHtml(dirAuth.signer_name)}</strong> (Director) on ${new Date(dirAuth.acknowledged_at).toLocaleDateString('en-GB')} — annual review due ${_authDue.toLocaleDateString('en-GB')}.</div></div>
            <button class="btn btn-ghost btn-sm" onclick="docDirSignStart()" title="Re-sign, e.g. after annual review">↻ Re-sign</button>
-         </div>`
+         </div>`)
       : `<div style="background:rgba(234,179,8,.08);border:1px solid #eab308;border-radius:8px;padding:10px 14px;margin-bottom:14px">
            <div style="font-weight:700;color:#eab308;margin-bottom:4px">⚠ Not authorised for issue</div>
            <div style="font-size:12px;color:var(--muted);margin-bottom:8px">No director signature on this version. Sign below to authorise it and confirm it remains current.</div>
@@ -48698,6 +48740,17 @@ async function docDirSignSave() {
       signer_name: name, signer_company: 'BAMA Fabrication Ltd — Director',
       statement: POLICY_DIRECTOR_STATEMENT, signature: _docDirSigData
     });
+    // Signing electronically IS the annual review — offer to move the review
+    // (expiry) date forward 12 months so nobody edits dates in Word again.
+    try {
+      const due = new Date(); due.setMonth(due.getMonth() + POLICY_REVIEW_MONTHS);
+      const dueStr = due.toISOString().slice(0, 10);
+      const bump = await bamaConfirm({
+        title: 'Set next review date?', icon: '📅', confirmText: 'Set review date',
+        body: `Move the review / expiry date of <strong>${escapeHtml(d.title)}</strong> to <strong>${due.toLocaleDateString('en-GB')}</strong> (12 months from today)?<br><span style="color:var(--muted);font-size:12px">Currently: ${d.expiry_date ? new Date(d.expiry_date + 'T00:00:00').toLocaleDateString('en-GB') : 'no review date'}. Your signature is recorded either way.</span>`
+      });
+      if (bump) { await api.put(`/api/company-documents/${d.id}`, { expiry_date: dueStr }); d.expiry_date = dueStr; }
+    } catch (revErr) { console.warn('review-date bump failed (signature is safe):', revErr.message); }
     status.textContent = 'Filing the register PDF…';
     try {
       await polFileRegister({ name: d.title, fileName: d.file_name, fileId: d.sharepoint_file_id, driveId: d.drive_id || null, docRef: d.doc_ref || '' });
@@ -50049,7 +50102,8 @@ const HELP_TOPICS = [
     { q: 'Can we add a new check sheet?', a: 'Yes — a check sheet is just a definition row in the QmsForms table (a small piece of JSON). Adding one is an SQL insert, no code. Field types available: text, number, date, select, tick (yes/no with your own labels), long text, job/machine/personnel picker, photo, signature and repeating tables.' },
   ]},
   { area: 'Company / Employee / Supplier Docs', icon: '📁', items: [
-    { q: 'Where do insurances and policies live?', a: 'Office ▸ Company Docs. Drag PDFs in and the reader pulls out the reference, issuer and expiry for you to eyeball and save. Expiry reminders show on the Estimating Dashboard.' },
+    { q: 'Where do insurances and policies live?', a: 'Office ▸ Company Docs. Drag PDFs in and the reader pulls out the reference, issuer and expiry for you to eyeball and save. If a drop looks like a new version of something already on the register you are offered a one-tap Renew — the old entry is archived instead of lingering as expired. Expiry reminders show on the Estimating Dashboard.' },
+    { q: 'Annual policy review / director signature', a: 'Open the ✍ on a policy in Company Docs and sign as director — the electronic signature IS the annual review, and after signing you can move the review date forward 12 months in one tap (no more editing dates in Word). The ✍ marker shows green (authorised, in date), red (annual review overdue) or amber (never signed). Staff read-and-sign from the mobile app ▸ Sign Policies.' },
     { q: 'Employee documents and contracts', a: 'Office ▸ Employees ▸ Docs on a person: their register plus a contract, offer letter and new-starter sheet generator. The contract/offer wording is still a DRAFT template — check it before any real use.' },
     { q: 'Supplier approval status', a: 'Office ▸ Suppliers: each supplier has an approval status (approved / conditional / suspended) with a review-due date, plus a document area for their insurances and quality certs.' },
   ]},
