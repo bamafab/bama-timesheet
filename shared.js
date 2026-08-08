@@ -50279,7 +50279,9 @@ const STARTER_FIELDS = [
   ['Driving Licence (if applicable)', [['dl_number','Licence number'],['dl_expiry','Expiry date','date'],['dl_endorsements','Endorsements (if any)']]]
 ];
 
-function openStarterForm() {
+let _starterStandalone = false;
+function openStarterForm(standalone) {
+  _starterStandalone = !!standalone;
   if (!document.getElementById('starterFormModal')) {
     const fields = STARTER_FIELDS.map(([sec, fs]) =>
       `<div style="grid-column:1/3;font-weight:700;font-size:12px;margin-top:6px;color:var(--accent)">${sec}</div>` +
@@ -50304,8 +50306,16 @@ function openStarterForm() {
         </div></div></div>`;
     document.body.appendChild(div.firstElementChild);
   }
-  const nameEl = document.getElementById('sf_full_name');
-  if (nameEl && !nameEl.value) nameEl.value = _empDocsEmp || '';
+  if (_starterStandalone) {
+    // Fresh form for a candidate — wipe anything left from a previous open
+    for (const [, fs] of STARTER_FIELDS) for (const [k] of fs) {
+      const el = document.getElementById('sf_' + k); if (el) el.value = '';
+    }
+    const st = document.getElementById('sfStatus'); if (st) st.textContent = '';
+  } else {
+    const nameEl = document.getElementById('sf_full_name');
+    if (nameEl && !nameEl.value) nameEl.value = _empDocsEmp || '';
+  }
   document.getElementById('starterFormModal').style.display = 'flex';
 }
 
@@ -50341,7 +50351,7 @@ async function saveStarterForm() {
     doc.text('Signature: ____________________________        Date: ______________', M, y);
     const blob = doc.output('blob');
     status.textContent = 'Filing…';
-    const empName = _empDocsEmp || v('full_name');
+    const empName = _starterStandalone ? v('full_name') : (_empDocsEmp || v('full_name'));
     const fileName = `New Employee Sheet - ${empName} - ${new Date().toISOString().slice(0, 10)}.pdf`;
     const folder = await employeeDocsFolder(empName);
     const up = await uploadFileToFolder(folder.id, fileName, await blob.arrayBuffer(), 'application/pdf', BAMA_DRIVE_ID);
@@ -50354,7 +50364,14 @@ async function saveStarterForm() {
     window.open(URL.createObjectURL(blob), '_blank');
     toast('Starter sheet saved & filed — print for a wet signature if needed', 'success');
     document.getElementById('starterFormModal').style.display = 'none';
-    loadEmployeeDocs();
+    if (_starterStandalone) {
+      // Blank the form so the next candidate never sees this one's details
+      for (const [, fs] of STARTER_FIELDS) for (const [k] of fs) {
+        const el = document.getElementById('sf_' + k); if (el) el.value = '';
+      }
+    } else if (document.getElementById('empDocsModal')?.style.display === 'flex') {
+      loadEmployeeDocs();
+    }
   } catch (e) { status.textContent = 'Failed: ' + e.message; }
   finally { btn.disabled = false; }
 }
@@ -50751,7 +50768,7 @@ const HELP_TOPICS = [
     { q: 'Where do insurances and policies live?', a: 'Office ▸ Company Docs. Drag PDFs in and the reader pulls out the reference, issuer and expiry for you to eyeball and save. If a drop looks like a new version of something already on the register you are offered a one-tap Renew — the old entry is archived instead of lingering as expired. Expiry reminders show on the Estimating Dashboard.' },
     { q: 'Policy Studio — policies signed ON the document', a: 'Office ▸ Company Docs ▸ Policy Studio. Import an existing policy (docx/PDF — extracted verbatim, you eyeball it) or write one; the PDF is regenerated in the house style with the authorisation block on the last page. Issue & sign is one click once your signature is stored. Re-signing the same revision overwrites the same file so staff signatures are kept; editing the content bumps the revision, staff re-sign, and the register/reminders update automatically.' },
     { q: 'Annual policy review / director signature', a: 'Open the ✍ on a policy in Company Docs and sign as director — the electronic signature IS the annual review, and after signing you can move the review date forward 12 months in one tap (no more editing dates in Word). Signing also files an "— Authorised <date>.pdf" next to the original: the policy itself with a Document Authorisation page (statement, signature, dates) appended — upload THAT file to Constructionline / CHAS / clients. The ✍ marker shows green (authorised, in date), red (annual review overdue) or amber (never signed). Staff read-and-sign from the mobile app ▸ Sign Policies.' },
-    { q: 'Employee documents and contracts', a: 'Office ▸ Employees ▸ Docs on a person: their register plus a contract, offer letter and new-starter sheet generator. The contract/offer wording is still a DRAFT template — check it before any real use.' },
+    { q: 'Employee documents and contracts', a: 'Office ▸ Employees ▸ Docs on a person: their register plus a contract, offer letter and new-starter sheet generator. A standalone 📋 New starter form button also sits at the top of Staff Management — hand the device to a candidate who is not on the books yet; it files under their name in 03 - Employees so it is already there if you hire them. The contract/offer wording is still a DRAFT template — check it before any real use.' },
     { q: 'Supplier approval status', a: 'Office ▸ Suppliers: each supplier has an approval status (approved / conditional / suspended) with a review-due date, plus a document area for their insurances and quality certs.' },
   ]},
   { area: 'Training, Plant & Welders', icon: '🎓', items: [

@@ -1183,6 +1183,12 @@ the paper sheet: personal/bank/NI/RTW/emergency/P45/driving-licence fields,
 STARTER_FIELDS const; hand device to the starter, save renders PDF + files;
 RTW expiry saved as the register expiry so it alerts; doc_type 'starter').
 Both use `_empPdfHeader()` text letterhead (Enterprise Way address).
+**Standalone mode (2026-08-08):** `openStarterForm(true)` — 📋 button at the
+top of office.html ▸ Staff Management, for candidates not yet on the books.
+Opens blank (clears previous candidate's data on open AND after save — never
+prefills from `_empDocsEmp`), files under the typed name in 03 - Employees,
+skips the `loadEmployeeDocs()` refresh unless empDocsModal is actually open.
+Per-employee flow from the Docs modal unchanged (`openStarterForm()`).
 
 **D4 foundation:** data-driven QMS engine — `QmsForms` (versioned JSON
 definitions; **new sheets = SQL INSERT, no code**) + `QmsSubmissions`
