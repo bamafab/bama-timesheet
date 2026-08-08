@@ -734,6 +734,45 @@ mark-fabricated step). Migration: `api/sql/add-staged-fabrication.sql`.
   production, `SQL_CONNECTION_STRING`, `AZURE_TENANT_ID`, `AZURE_CLIENT_ID` come
   from App Settings on the Function App. Never commit real secrets.
 
+### QB session notes (2026-08-08)
+
+- **Handover Pack is THE internal document.** The old standalone Cost Breakdown
+  was merged into `buildHandoverPackHtml()` (quote-builder.html): cost element
+  table, full steel schedule (area-grouped, EA-aware, fittings row), wizard-item
+  labour table, engine-effective finishing quantities, delivery section,
+  What-If. PDF menu: Quote / Quote + Handover / Handover Pack ('breakdown' mode
+  is a legacy alias). Tonnage on the pack ALWAYS includes fittings
+  (`totalKgInclFittings`); float displays trimmed to 3dp.
+- **The ⚡ wizard NEVER auto-fills Approval & Fab Pack hours.** The detailing
+  complexity midpoint (dwizMid) already covers producing approval drawings +
+  fab pack; a separate fabpack allowance double-counts. `q.fabpackHours = 0` in
+  every design branch of applyWizard; manual entry on Calcs remains. Also:
+  `closeWizard()` (Cancel) must NEVER write to the quote — it used to
+  force-apply auto hours on close. Only ✓ Apply writes.
+- **Wizard tile £ figures come from Global Rates.** `wizSyncRateLabels()`
+  rewrites survey/finish/crane/MEWP/prelim/delivery tile labels from `rates.*`
+  on every open; `wizDeliveryRate()` maps tile key `hiab_drop` → rates key
+  `hiab`. Survey rows priced from `rates.survey`, delivery (tiles, manual rows,
+  autoEstimateDelivery) from `rates.delivery` — never hardcode a rate in the
+  wizard again.
+- **Wizard "heaviest" = heaviest SINGLE piece** (row kg ÷ qty), not row total —
+  it's the critical lift weight for crane sizing.
+- **Takeoff selection:** master checkbox + per-area + per-sub-area checkboxes
+  (`toggleAreaSelect`/`toggleSubareaSelect`); selecting a collapsed group
+  expands it first (collapsed rows render no checkboxes), preserving other
+  selections across the rerender. Row cbs carry `data-area`/`data-subarea`.
+  Any checkbox INPUT inside the takeoff table must pin explicit
+  width/height/`flex:0 0 auto` inline — `.data-table input { width:100% }`
+  balloons it otherwise.
+- **STEEL_KGM lives in TWO copies** — quote-builder.html inline + steel-data.js
+  (loaded by projects.html; bump its `?v=` on change). 2026-08-08 fills: FLT
+  6–30mm band complete for all widths 40–500; standard EN 10210 RHS rectangles
+  added (300x150, 180x100, 260x180, 300x100, 350x250, 400x300, 450x250,
+  500x200/300 + gauge gaps). RHS masses per EN 10210-2:
+  `M = 0.00785*(2t(B+H) − 5.0731t²)`; FLT: `w×t×7850/1e6`, 3 sig figs.
+  Before assuming a "missing" section was removed, check `git log -S` — both
+  300x150 reports turned out to be original seed-data gaps.
+
 ### Quote Builder engines (staircase / spiral / balustrade)
 
 These apply to the wizard engines in `quote-builder.html`. They are hard
