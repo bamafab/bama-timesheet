@@ -346,8 +346,7 @@ tr.drag-dragging { opacity:0.35; }
       <button class="btn btn-ghost btn-sm" onclick="togglePdfMenu()" id="pdfBtn">📄 PDF ▾</button>
       <div id="pdfMenu" style="display:none;position:absolute;top:100%;right:0;background:var(--card);border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,0.4);min-width:200px;z-index:500;margin-top:4px;overflow:hidden">
         <div onclick="togglePdfMenu();runPreflight('generate the client quote', () => generateQuotePDF('quote'))" style="padding:10px 16px;cursor:pointer;font-size:13px;border-bottom:1px solid var(--border)" onmouseover="this.style.background='rgba(255,107,0,0.08)'" onmouseout="this.style.background=''">📋 Quote (client-facing)</div>
-        <div onclick="generateQuotePDF('breakdown');togglePdfMenu()" style="padding:10px 16px;cursor:pointer;font-size:13px;border-bottom:1px solid var(--border)" onmouseover="this.style.background='rgba(255,107,0,0.08)'" onmouseout="this.style.background=''">🔢 Cost Breakdown</div>
-        <div onclick="generateQuotePDF('combined');togglePdfMenu()" style="padding:10px 16px;cursor:pointer;font-size:13px;border-bottom:1px solid var(--border)" onmouseover="this.style.background='rgba(255,107,0,0.08)'" onmouseout="this.style.background=''">📄 Quote + Breakdown (internal)</div>
+        <div onclick="generateQuotePDF('combined');togglePdfMenu()" style="padding:10px 16px;cursor:pointer;font-size:13px;border-bottom:1px solid var(--border)" onmouseover="this.style.background='rgba(255,107,0,0.08)'" onmouseout="this.style.background=''">📄 Quote + Handover (internal)</div>
         <div onclick="generateHandoverPack();togglePdfMenu()" style="padding:10px 16px;cursor:pointer;font-size:13px" onmouseover="this.style.background='rgba(255,107,0,0.08)'" onmouseout="this.style.background=''">📦 Handover Pack (internal)</div>
       </div>
     </div>
@@ -20136,257 +20135,31 @@ function generateQuotePDF(mode = 'quote', returnHtml = false) {
     if (mode === 'quote') { openPdfWindow(quoteHtml); return; }
   }
 
-  // ── BREAKDOWN PDF ─────────────────────────────────────────
-  const margin = parseFloat(document.getElementById('marginSlider')?.value)||q.margin||20;
-  const totals = [
-    ['Steel Material (raw)',        (computed.material||0) - (computed.fittingsCostVal||0) - (computed.fixingsCost||0) - (parseFloat(q.miscMaterial)||0)],
-    ['Fittings & Connections',      computed.fittingsCostVal||0],
-    computed.fixingsCost > 0 ? ['Fixings & Consumables',   computed.fixingsCost||0] : null,
-    (parseFloat(q.miscMaterial)||0) > 0 ? ['Misc Material', parseFloat(q.miscMaterial)||0] : null,
-    ['Installation (labour + plant)', computed.installation||0],
-    ['Fabrication + Consumables',   computed.fabrication||0],
-    ['Design',                      computed.design||0],
-    ['Galvanising',                 computed.galvanising||0],
-    ['Painting / Finishing',        computed.painting||0],
-    ['Survey',                      computed.survey||0],
-    ['Delivery',                    computed.delivery||0],
-    ['Prelims',                     computed.prelims||0],
-    ['Purlins',                     computed.purlins||0],
-  ].filter(row => row && row[1] > 0);
-  const subtotal = totals.reduce((s,[,v]) => s+v, 0);
-  const marginAmt = Math.round(subtotal*margin/100*100)/100;
-  const total = Math.round((subtotal+marginAmt)*100)/100;
-  const totalKg = totalTakeoffKg();
+  // ── HANDOVER PACK routes (internal) ──────────────────────
+  // The old standalone Cost Breakdown was merged into the Handover Pack
+  // (2026-08-08): one internal document instead of two half-documents.
+  // 'breakdown' is kept as a legacy alias for the handover pack.
+  const hpInner = buildHandoverPackHtml(q);
 
-  const bkRows = totals.map(([label,val]) => `
-    <tr>
-      <td style="padding:8px 10px;border-bottom:1px solid #e5e7eb">${escHtml(label)}</td>
-      <td style="padding:8px 10px;border-bottom:1px solid #e5e7eb;text-align:right;font-family:monospace">${fmtGBP(val)}</td>
-      <td style="padding:8px 10px;border-bottom:1px solid #e5e7eb;text-align:right;color:#888;font-size:11px">${subtotal>0?(val/subtotal*100).toFixed(1)+'%':''}</td>
-    </tr>`).join('');
+  if (mode === 'breakdown' || mode === 'handover') {
+    openPdfWindow(buildPdfPage(`Handover Pack — ${escHtml(q.ref)}${revStr}`, hpInner));
+    return;
+  }
 
-  // Takeoff — individual rows with length, qty, kg, cost
-  const tkRows = (q.takeoff||[]).filter(r => r.type).map(r => {
-    const kg = (r.length/1000) * (r.kgm||0) * (r.qty||1);
-    const cost = kg * (r.rate||0);
-    const lenM = r.length ? (r.length/1000).toFixed(2)+'m' : '—';
-    return `<tr>
-      <td style="padding:5px 10px;border-bottom:1px solid #f0f0f0;font-family:monospace;font-size:11px">${escHtml(r.type)}</td>
-      <td style="padding:5px 10px;border-bottom:1px solid #f0f0f0;text-align:right;font-size:11px">${lenM}</td>
-      <td style="padding:5px 10px;border-bottom:1px solid #f0f0f0;text-align:right;font-size:11px">${r.qty||1}</td>
-      <td style="padding:5px 10px;border-bottom:1px solid #f0f0f0;text-align:right;font-size:11px">${kg>0?kg.toFixed(1)+' kg':'—'}</td>
-      <td style="padding:5px 10px;border-bottom:1px solid #f0f0f0;text-align:right;font-size:11px">${cost>0?fmtGBP(cost):'—'}</td>
-    </tr>`;
-  }).join('');
-  const tkTotalKg = (q.takeoff||[]).reduce((s,r) => s + (r.length/1000)*(r.kgm||0)*(r.qty||1), 0);
-  const tkTotalCost = (q.takeoff||[]).reduce((s,r) => s + rowCost(r), 0);
-
-  // ── Handover Pack data ────────────────────────────────────
-  const fabHrsVal   = parseFloat(document.getElementById('fab-hours')?.value) || q.fabHours || 0;
-  const fabRateVal  = parseFloat(document.getElementById('fab-rate')?.value)  || q.fabRate  || 45;
-  const designHrsVal    = parseFloat(document.getElementById('design-hours')?.value)    || q.designHours    || 0;
-  const structEngHrsVal = parseFloat(document.getElementById('struct-eng-hours')?.value) || q.structEngHours || 0;
-  const architectHrsVal = parseFloat(document.getElementById('architect-hours')?.value)  || q.architectHours || 0;
-  const fabpackHrsVal   = parseFloat(document.getElementById('fabpack-hours')?.value)    || q.fabpackHours   || 0;
-  const connDesignHrsVal = parseFloat(document.getElementById('conn-design-hours')?.value) || q.connDesignHours || 0;
-  const instDaysVal = parseFloat(document.getElementById('inst-days')?.value) || q.instDays || 0;
-  const instOpsVal  = parseFloat(document.getElementById('inst-operatives')?.value) || q.instOperatives || 0;
-
-  // Labour rows
-  const labourRowsForPack = (q.labourRows||[]).map(r =>
-    `<tr><td style="padding:5px 10px;border-bottom:1px solid #f0f0f0">${escHtml(r.label||r.type)}</td><td style="padding:5px 10px;border-bottom:1px solid #f0f0f0;text-align:right">${r.qty||1} operative${(r.qty||1)!==1?'s':''}</td><td style="padding:5px 10px;border-bottom:1px solid #f0f0f0;text-align:right">${instDaysVal} day${instDaysVal!==1?'s':''}</td><td style="padding:5px 10px;border-bottom:1px solid #f0f0f0;text-align:right;font-family:monospace">${fmtGBP(r.rate||0)}/day</td></tr>`
-  ).join('');
-
-  // Plant / equipment rows
-  const plantRowsForPack = (q.plantRows||[]).map(r =>
-    `<tr><td style="padding:5px 10px;border-bottom:1px solid #f0f0f0">${escHtml(r.label||r.type)}</td><td style="padding:5px 10px;border-bottom:1px solid #f0f0f0;text-align:right">${r.qty||1} day${(r.qty||1)!==1?'s':''}</td><td style="padding:5px 10px;border-bottom:1px solid #f0f0f0;text-align:right;font-family:monospace">${fmtGBP(r.rate||0)}/day</td><td style="padding:5px 10px;border-bottom:1px solid #f0f0f0;text-align:right;font-weight:600;font-family:monospace">${fmtGBP((r.qty||1)*(r.rate||0))}</td></tr>`
-  ).join('');
-
-  const exclusionsText = (q.projectTCs||'').trim();
-
-  // ── Reusable BD section component ──────────────────────────────────────
-  const bdSec = (headCls, title, bodyHtml) =>
-    `<div class="bd-section"><div class="bd-sec-head ${headCls}">${title}</div>${bodyHtml}</div>`;
-  const bdTable = (theadHtml, tbodyHtml, tfootHtml='') =>
-    `<table><thead>${theadHtml}</thead><tbody>${tbodyHtml}</tbody>${tfootHtml?`<tfoot>${tfootHtml}</tfoot>`:''}</table>`;
-
-  const handoverHtml = `
-    <div style="page-break-before:always;margin-top:0"></div>
-
-    <!-- ── Handover Pack Sub-header ── -->
-    <div style="display:flex;justify-content:space-between;align-items:flex-end;margin:18px 0 14px;padding-bottom:10px;border-bottom:3px solid #D0021B">
-      <div>
-        <div style="font-size:15px;font-weight:900;color:#1a1a2e;letter-spacing:0.02em">ESTIMATING HANDOVER PACK</div>
-        <div style="font-size:9.5px;color:#6b7280;margin-top:3px;text-transform:uppercase;letter-spacing:0.08em">Internal — retain with quote file</div>
-      </div>
-      <div style="text-align:right;font-size:9.5px;color:#6b7280;line-height:1.7">
-        <strong style="color:#1a1a2e">${escHtml(q.company||'—')}</strong><br>
-        Ref: ${escHtml(q.ref||'—')}<br>
-        Quoted: ${escHtml(q.date||'—')}
-      </div>
-    </div>
-
-    <!-- Fabrication & Design (internal) -->
-    <div class="internal-only">
-    ${bdSec('navy', '⚙ Workshop — Fabrication &amp; Design', bdTable(
-      `<tr><th>Activity</th><th style="text-align:right">Hours</th><th style="text-align:right">Rate</th><th style="text-align:right;width:110px">Cost (£)</th></tr>`,
-      [
-        fabHrsVal > 0      ? `<tr><td>Workshop Fabrication</td><td style="text-align:right">${fabHrsVal} hrs</td><td style="text-align:right">${fmtGBP(fabRateVal)}/hr</td><td style="text-align:right;font-variant-numeric:tabular-nums">${fmtGBP(fabHrsVal*fabRateVal)}</td></tr>` : '',
-        fabpackHrsVal > 0  ? `<tr style="background:#f9fafc"><td>Approval &amp; Fabrication Pack</td><td style="text-align:right">${fabpackHrsVal} hrs</td><td style="text-align:right">${fmtGBP(q.fabpackRate||50)}/hr</td><td style="text-align:right;font-variant-numeric:tabular-nums">${fmtGBP(fabpackHrsVal*(q.fabpackRate||50))}</td></tr>` : '',
-        designHrsVal > 0   ? `<tr><td>Draughtsman / Detailing</td><td style="text-align:right">${designHrsVal} hrs</td><td style="text-align:right">${fmtGBP(q.designRate||50)}/hr</td><td style="text-align:right;font-variant-numeric:tabular-nums">${fmtGBP(designHrsVal*(q.designRate||50))}</td></tr>` : '',
-        structEngHrsVal > 0? `<tr style="background:#f9fafc"><td>Structural Engineer</td><td style="text-align:right">${structEngHrsVal} hrs</td><td style="text-align:right">${fmtGBP(q.structEngRate||90)}/hr</td><td style="text-align:right;font-variant-numeric:tabular-nums">${fmtGBP(structEngHrsVal*(q.structEngRate||90))}</td></tr>` : '',
-        architectHrsVal > 0? `<tr><td>Architect</td><td style="text-align:right">${architectHrsVal} hrs</td><td style="text-align:right">${fmtGBP(q.architectRate||90)}/hr</td><td style="text-align:right;font-variant-numeric:tabular-nums">${fmtGBP(architectHrsVal*(q.architectRate||90))}</td></tr>` : '',
-        connDesignHrsVal > 0?`<tr style="background:#f9fafc"><td>Connection Design</td><td style="text-align:right">${connDesignHrsVal} hrs</td><td style="text-align:right">${fmtGBP(q.connDesignRate||50)}/hr</td><td style="text-align:right;font-variant-numeric:tabular-nums">${fmtGBP(connDesignHrsVal*(q.connDesignRate||50))}</td></tr>` : '',
-        (fabHrsVal+fabpackHrsVal+designHrsVal+structEngHrsVal+architectHrsVal+connDesignHrsVal)===0 ? `<tr><td colspan="4" style="color:#9ca3af;font-style:italic;padding:8px 10px">No hours allocated</td></tr>` : ''
-      ].filter(Boolean).join('') +
-      (tkTotalKg > 0 && fabHrsVal > 0 ? `<tr style="background:#f0f4ff"><td colspan="3" style="color:#374151;font-size:9.5px">Productivity: fab hrs per tonne</td><td style="text-align:right;color:#1a1a2e;font-weight:700">${(fabHrsVal/(tkTotalKg/1000)).toFixed(1)} hrs/t</td></tr>` : '')
-    ))}
-    </div><!-- /internal-only fab+design -->
-
-    <!-- Installation Crew -->
-    ${(labourRowsForPack || instDaysVal > 0) ? bdSec('red', `👷 Installation Crew &mdash; ${instOpsVal} operative${instOpsVal!==1?'s':''} &thinsp;·&thinsp; ${instDaysVal} day${instDaysVal!==1?'s':''} on site`,
-      labourRowsForPack
-        ? bdTable(`<tr><th>Role</th><th style="text-align:right">Qty</th><th style="text-align:right">Days</th><th style="text-align:right">Day Rate</th><th style="text-align:right;width:110px">Cost (£)</th></tr>`, labourRowsForPack)
-        : '<div style="padding:10px 11px;color:#9ca3af;font-style:italic;font-size:10px">Supply only — no installation crew</div>'
-    ) : ''}
-
-    <!-- Plant & Equipment -->
-    ${plantRowsForPack ? bdSec('navy', '🏗 Plant &amp; Equipment',
-      bdTable(`<tr><th>Equipment / Item</th><th colspan="3">Detail</th><th style="text-align:right;width:110px">Cost (£)</th></tr>`, plantRowsForPack)
-    ) : ''}
-
-    <!-- T&Cs / Exclusions / Clarifications (same format as client quote) -->
-    ${buildTcHtml(q)}
-
-    <!-- Footer -->
-    <div style="margin-top:16px;padding-top:10px;border-top:1px solid #dde0ee;font-size:9.5px;color:#9ca3af;display:flex;justify-content:space-between">
-      <span>Prepared by ${escHtml(q.preparedBy||'BAMA Fabrication')} &nbsp;·&nbsp; ${escHtml(q.date||'')}</span>
-      <span>INTERNAL — NOT FOR CLIENT DISTRIBUTION</span>
-    </div>
-  `;
-
-  // ── Internal-only CSS injection for breakdown page ──────────────────────
-  const _bdInternalCss = `<style>
-    .internal-only { display:block !important; }
-    /* Breakdown-specific overrides on top of buildPdfPage base */
-    .bd-confidential {
-      display:flex; align-items:center; gap:10px;
-      background:#1a1a2e; color:#fff;
-      padding:7px 12px; border-radius:3px;
-      font-size:9px; font-weight:800;
-      letter-spacing:0.15em; text-transform:uppercase;
-      margin-bottom:16px;
-    }
-    .bd-section {
-      margin-bottom:14px; border:1px solid #dde0ee;
-      border-radius:3px; overflow:hidden; break-inside:avoid; page-break-inside:avoid;
-    }
-    .bd-sec-head {
-      padding:6px 11px; font-size:9.5px; font-weight:800;
-      text-transform:uppercase; letter-spacing:0.1em; color:#fff;
-    }
-    .bd-sec-head.navy  { background:#1a1a2e; }
-    .bd-sec-head.red   { background:#D0021B; }
-    .bd-sec-head.slate { background:#2c3e50; }
-    .bd-totals { border-top:2px solid #1a1a2e; }
-    .bd-total-row {
-      display:flex; justify-content:space-between; align-items:center;
-      padding:7px 11px; font-size:11px; border-bottom:1px solid #eef0f6;
-    }
-    .bd-total-row span:last-child { font-family:'Courier New',monospace; font-variant-numeric:tabular-nums; }
-    .bd-grand {
-      background:#1a1a2e; color:#fff;
-      padding:10px 12px; font-size:13px; font-weight:700;
-      display:flex; justify-content:space-between; align-items:center;
-    }
-    .bd-grand .gv { color:#D0021B; font-size:16px; font-family:'Courier New',monospace; }
-    .bd-meta { padding:6px 11px; font-size:9.5px; color:#9ca3af; border-top:1px solid #eef0f6; }
-  </style>`;
-
-  const breakdownHtml = buildPdfPage(`Cost Breakdown — ${escHtml(q.ref)}${revStr}`, `
+  // ── COMBINED — client quote + handover pack in one window ─
+  const combined = buildPdfPage(`${escHtml(q.ref)} — Quote + Handover Pack`, `
     ${docHeader}
-    ${_bdInternalCss}
-
-    <div class="bd-confidential">
-      <span>⚠</span>
-      <span>Confidential — Internal Cost Breakdown — Not for Client Distribution</span>
+    <table>
+      <thead><tr><th style="width:60px">Quantity</th><th>Description</th><th style="text-align:right;width:110px">Unit Price</th><th style="text-align:right;width:110px">Amount</th></tr></thead>
+      <tbody>${lineRows||''}</tbody>
+    </table>
+    <div class="totals-block">
+      <div class="total-row grand"><span>TOTAL</span><span class="val">${fmtGBP(grandTotal)}</span></div>
+      <div style="padding:6px 10px;font-size:10px;color:#888">All prices are exclusive of VAT</div>
     </div>
-
-    <!-- Cost Summary -->
-    <div class="bd-section">
-      <div class="bd-sec-head navy">Cost Element Breakdown</div>
-      <table>
-        <thead><tr>
-          <th>Cost Element</th>
-          <th style="text-align:right;width:130px">Net Cost (£)</th>
-          <th style="text-align:right;width:80px">% of Sub</th>
-        </tr></thead>
-        <tbody>${bkRows}</tbody>
-      </table>
-      <div class="bd-totals">
-        <div class="bd-total-row"><span>Sub-total</span><span>${fmtGBP(subtotal)}</span></div>
-        <div class="internal-only bd-total-row" style="color:#2c3e50"><span>Margin (${margin}%)</span><span>${fmtGBP(marginAmt)}</span></div>
-        <div class="bd-grand"><span>TOTAL (incl. margin)</span><span class="gv">${fmtGBP(total)}</span></div>
-        ${(computed.totalKgInclFittings || totalKg) > 0 ? `<div class="bd-meta">Cost per kg (incl. fittings): £${(subtotal/(computed.totalKgInclFittings||totalKg)).toFixed(2)}/kg net &nbsp;·&nbsp; £${(total/(computed.totalKgInclFittings||totalKg)).toFixed(2)}/kg sell</div>` : ''}
-      </div>
-    </div>
-
-    ${buildInternalAreaTableHtml(q)}
-
-    ${tkRows ? `
-    <!-- Steel Takeoff -->
-    <div class="bd-section">
-      <div class="bd-sec-head navy">Steel Takeoff — Material Detail</div>
-      <table>
-        <thead><tr>
-          <th>Section Profile</th>
-          <th style="text-align:right">Length</th>
-          <th style="text-align:right">Qty</th>
-          <th style="text-align:right">Total kg</th>
-          <th style="text-align:right">Material £</th>
-        </tr></thead>
-        <tbody>${tkRows}</tbody>
-        <tfoot>
-          <tr style="background:#f5f5f5">
-            <td colspan="3" style="padding:6px 10px;font-size:10px;color:#555">Structural Members subtotal</td>
-            <td style="padding:6px 10px;text-align:right;font-size:10px;color:#555;font-variant-numeric:tabular-nums">${tkTotalKg.toFixed(1)} kg</td>
-            <td style="padding:6px 10px;text-align:right;font-size:10px;color:#555;font-variant-numeric:tabular-nums">${fmtGBP(tkTotalCost)}</td>
-          </tr>
-          ${computed.fittingsKg > 0 ? `<tr style="background:#f5f5f5">
-            <td colspan="3" style="padding:6px 10px;font-size:10px;color:#555">Fittings &amp; Connections (${isFinite(parseFloat(q.fittingsPct)) ? parseFloat(q.fittingsPct) : 10}% of members)</td>
-            <td style="padding:6px 10px;text-align:right;font-size:10px;color:#555;font-variant-numeric:tabular-nums">${(computed.fittingsKg||0).toFixed(1)} kg</td>
-            <td style="padding:6px 10px;text-align:right;font-size:10px;color:#555;font-variant-numeric:tabular-nums">${fmtGBP(computed.fittingsCostVal||0)}</td>
-          </tr>` : ''}
-          <tr>
-            <td colspan="3" style="padding:7px 10px;font-weight:700;border-top:2px solid #d1d5db">Total Steel Weight</td>
-            <td style="padding:7px 10px;text-align:right;font-weight:700;border-top:2px solid #d1d5db;font-variant-numeric:tabular-nums">${(tkTotalKg + (computed.fittingsKg||0)).toFixed(1)} kg</td>
-            <td style="padding:7px 10px;text-align:right;font-weight:700;border-top:2px solid #d1d5db;font-variant-numeric:tabular-nums">${fmtGBP(tkTotalCost + (computed.fittingsCostVal||0))}</td>
-          </tr>
-        </tfoot>
-      </table>
-    </div>` : ''}
-
-    ${handoverHtml}
-  `);
-
-  if (mode === 'breakdown') { openPdfWindow(breakdownHtml); return; }
-
-  // ── COMBINED — quote + breakdown in same window ──────────
-  const combined = buildPdfPage(`${escHtml(q.ref)} — Quote + Breakdown`, `
-    ${buildPdfPage(`Quotation ${escHtml(q.ref)}${revStr}`, `
-      ${docHeader}
-      <table>
-        <thead><tr><th style="width:60px">Quantity</th><th>Description</th><th style="text-align:right;width:110px">Unit Price</th><th style="text-align:right;width:110px">Amount</th></tr></thead>
-        <tbody>${lineRows||''}</tbody>
-      </table>
-      <div class="totals-block">
-        <div class="total-row grand"><span>TOTAL</span><span class="val">${fmtGBP(grandTotal)}</span></div>
-        <div style="padding:6px 10px;font-size:10px;color:#888">All prices are exclusive of VAT</div>
-      </div>
-      ${tcHtml}
-    `).replace('<!DOCTYPE html><html><head>','').replace('</html>','')}
+    ${tcHtml}
     <div style="page-break-before:always"></div>
-    ${breakdownHtml.replace('<!DOCTYPE html><html><head>','').replace('</html>','')}
+    ${hpInner}
   `);
   openPdfWindow(combined);
 }
@@ -21260,74 +21033,208 @@ function steelPriceWhatIf(materialCost, total, marginPct) {
   });
 }
 
-function generateHandoverPack() {
-  const q = getQuote();
-  if (!q) return;
-
+// ============================================================
+// HANDOVER PACK — the single internal estimating document.
+// Merged with the old Cost Breakdown (2026-08-08): cost elements,
+// full steel schedule, wizard-item labour, What-If — one pack.
+// Returns INNER html for buildPdfPage so the same content serves
+// the standalone pack and the Quote + Handover combined print.
+// Display only — every figure comes from computeQuoteTotals /
+// wizLabourRollup, so this can never disagree with the Calcs tab.
+// ============================================================
+function buildHandoverPackHtml(q) {
   const computed = computeQuoteTotals(q, null);
-  const fmt  = v => v > 0 ? '£' + Math.round(v).toLocaleString('en-GB') : '—';
+  const esc  = escHtml;
+  const fmt  = v => v > 0 ? fmtGBP(v) : '—';
+  const today = new Date().toLocaleDateString('en-GB', {day:'2-digit', month:'long', year:'numeric'});
+  // Trim binary-float noise: 1.900000000000000222 → "1.9"
+  const fmtNum    = v => String(Math.round((parseFloat(v)||0) * 1000) / 1000);
+  const fmtTonnes = kg => fmtNum(kg / 1000);
+  const finishQty = computed.finishQty || { galv_t:0, ppc_kg:0, primer_t:0 };
 
-  // ── Steel What-if Sensitivity ────────────────────────────────────────────
-  // material from computed engine; total and marginPct from quote state.
-  const _wiMaterial  = computed.material  || 0;
-  const _wiTotal     = computed.total     || 0;
-  const _wiMarginPct = q.margin           || 20;
-  const _wiScenarios = steelPriceWhatIf(_wiMaterial, _wiTotal, _wiMarginPct);
+  // ── Weights — fittings INCLUDED (that's what actually ships) ──
+  const steelKg     = computed.totalKg || 0;
+  const fittingsKg  = computed.fittingsKg || 0;
+  const shippedKg   = computed.totalKgInclFittings || (steelKg + fittingsKg);
+  const fittingsPct = isFinite(parseFloat(q.fittingsPct)) ? parseFloat(q.fittingsPct) : 10;
 
-  const fmtWI = v => '£' + Math.abs(Math.round(v)).toLocaleString('en-GB');
-  const whatifRowsHTML = _wiScenarios.map(s => {
-    const isDown  = s.delta < 0;
-    const cls     = isDown ? 'scenario-down' : 'scenario-up';
-    const sign    = s.totalDelta >= 0 ? '+' : '−';
-    const pctLabel = (s.delta > 0 ? '+' : '') + Math.round(s.delta * 100) + '%';
-    const barWidth = Math.min(100, Math.abs(s.totalDelta / (_wiTotal || 1)) * 100 * 10).toFixed(1);
-    const barColor = isDown ? '#27ae60' : '#c0392b';
-    return `<tr class="${isDown ? 'down' : 'up'}">
-      <td>${s.label}<div class="wi-bar-wrap"><div class="wi-bar" style="width:${barWidth}%;background:${barColor}"></div></div></td>
-      <td class="r">${fmtWI(s.newMaterial)}</td>
-      <td class="r" style="font-weight:700">${fmtWI(s.newTotal)}</td>
-      <td class="r ${isDown ? 'neg' : 'pos'}">${sign}&thinsp;${fmtWI(s.totalDelta)}</td>
-      <td class="r">${fmtWI(s.marginAmt)} (${s.marginPct}%)</td>
+  // ── Cost elements (mirrors engine buckets + N/A gates) ───
+  const na = q.blockNA || {};
+  const rawSteel = (computed.material||0) - (computed.fittingsCostVal||0) - (computed.fixingsCost||0) - (parseFloat(q.miscMaterial)||0);
+  const costRows = [
+    ['Steel Material (raw)',          rawSteel],
+    ['Fittings & Connections',        computed.fittingsCostVal||0],
+    (computed.fixingsCost||0) > 0        ? ['Fixings & Consumables', computed.fixingsCost]      : null,
+    (parseFloat(q.miscMaterial)||0) > 0  ? ['Misc Material',         parseFloat(q.miscMaterial)] : null,
+    na.installation ? null : ['Installation (labour + plant)', computed.installation||0],
+    na.fabrication  ? null : ['Fabrication + Consumables',     computed.fabrication||0],
+    na.design       ? null : ['Design',                        computed.design||0],
+    na.painting     ? null : ['Galvanising',                   computed.galvanising||0],
+    na.painting     ? null : ['Painting / Finishing',          computed.painting||0],
+    na.survey       ? null : ['Survey',                        computed.survey||0],
+    na.delivery     ? null : ['Delivery',                      computed.delivery||0],
+    na.prelims      ? null : ['Prelims',                       computed.prelims||0],
+    na.purlins      ? null : ['Purlins',                       computed.purlins||0],
+  ].filter(r => r && r[1] > 0);
+  const subtotal  = computed.subtotal  || 0;
+  const marginPct = parseFloat(q.margin) || 0;
+  const marginAmt = computed.marginAmt || 0;
+  const total     = computed.total     || 0;
+
+  const costHTML = costRows.length
+    ? costRows.map(([label,val]) => `<tr>
+        <td>${esc(label)}</td>
+        <td class="r mono">${fmtGBP(val)}</td>
+        <td class="r" style="color:#888;font-size:10px">${subtotal>0?(val/subtotal*100).toFixed(1)+'%':''}</td>
+      </tr>`).join('')
+    : '<tr><td colspan="3" class="hp-empty">Nothing priced yet</td></tr>';
+
+  // ── Production hours: main wizard + injected wizard items ──
+  const fabHrs        = parseFloat(q.fabHours)||0,      fabRate = parseFloat(q.fabRate)||45;
+  const fabpackHrs    = parseFloat(q.fabpackHours)||0;
+  const designHrs     = parseFloat(q.designHours)||0;
+  const structEngHrs  = parseFloat(q.structEngHours)||0;
+  const architectHrs  = parseFloat(q.architectHours)||0;
+  const connDesignHrs = parseFloat(q.connDesignHours)||0;
+  const instDays      = parseFloat(q.instDays)||0;
+  const instOps       = parseFloat(q.instOperatives)||0;
+
+  const wl      = wizLabourRollup(q);
+  const wlItems = wizLabourItems(q);
+  // Resolve a labour driver (override wins over engine default).
+  const drvVal = (item, eng, bucket, field) => {
+    const o = (item.labourOverride||{})[bucket];
+    if (o && typeof o === 'object' && o[field] != null && o[field] !== '') return Number(o[field]);
+    return eng.drivers[bucket][field];
+  };
+  let wizFabHrs = 0, wizDesignHrs = 0, wizInstallDays = 0;
+  const wizRowsHTML = wlItems.map(it => {
+    const l   = wizItemLabour(it.ref, it.kind);
+    const eng = wizEngineBuckets(it.ref, it.kind);
+    let fabDrv = '', desDrv = '';
+    if (eng.hasHours) {
+      const fh = Number(drvVal(it.ref, eng, 'fab', 'hrs'))||0;
+      const dh = Number(drvVal(it.ref, eng, 'design', 'hrs'))||0;
+      wizFabHrs += fh; wizDesignHrs += dh;
+      fabDrv = `<span class="hp-drv">${fmtNum(fh)}h · </span>`;
+      desDrv = `<span class="hp-drv">${fmtNum(dh)}h · </span>`;
+    }
+    const crew = Number(drvVal(it.ref, eng, 'install', 'crew'))||0;
+    const days = Number(drvVal(it.ref, eng, 'install', 'days'))||0;
+    wizInstallDays += days;
+    const instDrv = (crew > 0 && days > 0) ? `<span class="hp-drv">${fmtNum(crew)} crew × ${fmtNum(days)}d · </span>` : '';
+    const dot = b => wizBucketOverridden(it.ref, b) ? ' <span style="color:#D0021B;font-size:8.5px">●edited</span>' : '';
+    return `<tr>
+      <td>${it.kind==='staircase' ? '🪜' : '🛡'} ${esc(wizItemName(q, it))}</td>
+      <td class="r">${fabDrv}${fmt(l.fab)}${dot('fab')}</td>
+      <td class="r">${desDrv}${fmt(l.design)}${dot('design')}</td>
+      <td class="r">${instDrv}${fmt(l.install)}${dot('install')}</td>
+      <td class="r mono" style="font-weight:700">${fmt(l.fab + l.design + l.install)}</td>
     </tr>`;
   }).join('');
 
-  // Insert base-row (current) in the middle for visual context
-  const baseRowHTML = `<tr class="base">
-    <td>Current (base)</td>
-    <td class="r">${fmtWI(_wiMaterial)}</td>
-    <td class="r">${fmtWI(_wiTotal)}</td>
-    <td class="r" style="color:#6b7280">—</td>
-    <td class="r">${fmtWI(_wiTotal * (_wiMarginPct / 100))} (${_wiMarginPct}%)</td>
-  </tr>`;
+  const wizardSectionHTML = wlItems.length ? `
+  <div class="hp-section">
+    <div class="hp-sec-head slate">🪜 Wizard Items — Staircases, Spirals &amp; Balustrades</div>
+    <table>
+      <thead><tr><th>Item</th><th class="r">Fabrication</th><th class="r">Design</th><th class="r">Installation</th><th class="r">Total</th></tr></thead>
+      <tbody>${wizRowsHTML}</tbody>
+      <tfoot><tr>
+        <td>Wizard labour total</td>
+        <td class="r mono">${fmt(wl.fab)}</td>
+        <td class="r mono">${fmt(wl.design)}</td>
+        <td class="r mono">${fmt(wl.install)}</td>
+        <td class="r mono">${fmt(wl.total)}</td>
+      </tr></tfoot>
+    </table>
+    <div class="hp-note">Already included in the Fabrication / Design / Installation cost elements above. Wizard takeoff rows are excluded from the per-tonne fab estimate — no double-count.</div>
+  </div>` : '';
 
-  // Split: two down rows, base, two up rows
-  const whatifTableHTML = _wiScenarios.length >= 4
-    ? whatifRowsHTML.split('</tr>').filter(Boolean).map((r,i) => r + '</tr>').reduce((acc, r, i) => {
-        if (i === 2) return acc + baseRowHTML + r; // insert base before +5%
-        return acc + r;
-      }, '')
-    : baseRowHTML + whatifRowsHTML;
-  const fmtH = v => v > 0 ? v + ' hrs' : '—';
-  const fmtD = v => v > 0 ? v + (v === 1 ? ' day' : ' days') : '—';
-  const esc  = s => String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-  const today = new Date().toLocaleDateString('en-GB', {day:'2-digit',month:'long',year:'numeric'});
+  // ── Steel Section Schedule — full per-row, area-grouped, EA-aware ──
+  const schedRows = (q.takeoff || []).filter(r => r.type);
+  const schedRowHtml = r => {
+    const isEA = r._unit === 'EA';
+    const lengthStr = isEA ? '—' : (r.length ? Number(r.length).toLocaleString('en-GB') + ' mm' : '—');
+    const kg = rowWeight(r).kg;
+    const cost = rowCost(r);
+    return `<tr>
+      <td class="mono" style="font-size:10px">${esc(r.type)}</td>
+      <td class="r">${lengthStr}</td>
+      <td class="r">${r.qty || 1}</td>
+      <td class="r">${kg > 0 ? kg.toFixed(1) + ' kg' : '—'}</td>
+      <td class="r mono">${cost > 0 ? fmtGBP(cost) : '—'}</td>
+    </tr>`;
+  };
+  let schedBodyHTML = '', schedMembersKg = 0, schedMembersCost = 0;
+  schedRows.forEach(r => { schedMembersKg += rowWeight(r).kg; schedMembersCost += rowCost(r); });
+  const schedAreas    = q.areas || [];
+  const namedAreaIds  = schedAreas.map(a => a.id);
+  const distinctAreas = [...new Set(schedRows.map(r => r.area || ''))];
+  if (distinctAreas.length > 1) {
+    const usedIds = [
+      ...namedAreaIds.filter(id => distinctAreas.includes(id)),
+      ...distinctAreas.filter(id => id && !namedAreaIds.includes(id)),
+      ...(distinctAreas.includes('') ? [''] : [])
+    ];
+    usedIds.forEach(areaId => {
+      const areaDef  = schedAreas.find(a => a.id === areaId);
+      const areaName = areaDef?.name || (areaId ? areaId : 'Unspecified');
+      const areaRows = schedRows.filter(r => (r.area || '') === areaId);
+      if (!areaRows.length) return;
+      const areaKg   = areaRows.reduce((s, r) => s + rowWeight(r).kg, 0);
+      const areaCost = areaRows.reduce((s, r) => s + rowCost(r), 0);
+      schedBodyHTML += `<tr class="hp-area-sub">
+        <td colspan="3">${esc(areaName)}</td>
+        <td class="r">${areaKg > 0 ? areaKg.toFixed(1) + ' kg' : '—'}</td>
+        <td class="r mono">${areaCost > 0 ? fmtGBP(areaCost) : '—'}</td>
+      </tr>`;
+      areaRows.forEach(r => { schedBodyHTML += schedRowHtml(r); });
+    });
+  } else {
+    schedRows.forEach(r => { schedBodyHTML += schedRowHtml(r); });
+  }
+  const scheduleSectionHTML = schedRows.length ? `
+  <div class="hp-section">
+    <div class="hp-sec-head navy">⚖ Steel Section Schedule</div>
+    <table>
+      <thead><tr><th>Section Profile</th><th class="r">Length</th><th class="r">Qty</th><th class="r">Total kg</th><th class="r">Material £</th></tr></thead>
+      <tbody>${schedBodyHTML}</tbody>
+      <tfoot>
+        <tr style="background:#f8f9fc;font-weight:400">
+          <td colspan="3" style="font-size:10px;color:#555;border-top:none;background:#f8f9fc;font-weight:400">Structural members subtotal</td>
+          <td class="r" style="font-size:10px;color:#555;border-top:none;background:#f8f9fc;font-weight:400">${schedMembersKg.toFixed(1)} kg</td>
+          <td class="r mono" style="font-size:10px;color:#555;border-top:none;background:#f8f9fc;font-weight:400">${fmtGBP(schedMembersCost)}</td>
+        </tr>
+        ${fittingsKg > 0 ? `<tr style="background:#f8f9fc;font-weight:400">
+          <td colspan="3" style="font-size:10px;color:#555;border-top:none;background:#f8f9fc;font-weight:400">Fittings &amp; connections allowance (${fittingsPct}% of members)</td>
+          <td class="r" style="font-size:10px;color:#555;border-top:none;background:#f8f9fc;font-weight:400">${fittingsKg.toFixed(1)} kg</td>
+          <td class="r mono" style="font-size:10px;color:#555;border-top:none;background:#f8f9fc;font-weight:400">${fmtGBP(computed.fittingsCostVal||0)}</td>
+        </tr>` : ''}
+        <tr>
+          <td colspan="3">Total steel weight (incl. fittings)</td>
+          <td class="r">${(schedMembersKg + fittingsKg).toFixed(1)} kg</td>
+          <td class="r mono">${fmtGBP(schedMembersCost + (computed.fittingsCostVal||0))}</td>
+        </tr>
+      </tfoot>
+    </table>
+  </div>` : '';
 
-  // ── Labour rows ──
+  // ── Installation labour ──
   const labourRows = (q.labourRows || []);
   const labourHTML = labourRows.length > 0
     ? labourRows.map(r => {
         const days = r.locked ? r.lockedDays : (q.globalDays !== false ? (q.instDays || 0) : r.days);
         return `<tr>
-          <td>${esc(r.role || 'Operative')}</td>
-          <td style="text-align:center">${r.qty || 1}</td>
-          <td style="text-align:center">${days || 0} days</td>
-          <td style="text-align:right">£${r.rate || 0}/day</td>
-          <td style="text-align:right">${fmt((r.qty||1)*(days||0)*(r.rate||0))}</td>
+          <td>${esc(r.role || r.label || 'Operative')}</td>
+          <td class="r">${r.qty || 1}</td>
+          <td class="r">${days || 0} days</td>
+          <td class="r">£${r.rate || 0}/day</td>
+          <td class="r mono">${fmt((r.qty||1)*(days||0)*(r.rate||0))}</td>
         </tr>`;
       }).join('')
-    : '<tr><td colspan="5" style="color:#888;font-style:italic">No installation (Supply Only)</td></tr>';
+    : '<tr><td colspan="5" class="hp-empty">No installation (Supply Only)</td></tr>';
 
-  // ── Plant rows ──
+  // ── Plant & equipment ──
   const plantRows = (q.plantRows || []);
   const plantHTML = plantRows.length > 0
     ? plantRows.map(r => {
@@ -21335,62 +21242,84 @@ function generateHandoverPack() {
         const days = r.qty || 1;
         const cost = days * (r.rate || 0);
         const rateFormatted = '£' + Number(r.rate || 0).toLocaleString('en-GB', {minimumFractionDigits:2, maximumFractionDigits:2});
-        const detail = `${days} day${days !== 1 ? 's' : ''} @ ${rateFormatted}/day`;
         return `<tr>
           <td>${esc(label)}${r.supplierNote ? `<br><span style="font-size:10px;color:#888">${esc(r.supplierNote)}</span>` : ''}</td>
-          <td colspan="3" style="color:#666">${detail}</td>
-          <td style="text-align:right">${fmt(cost)}</td>
+          <td colspan="3" style="color:#666">${days} day${days !== 1 ? 's' : ''} @ ${rateFormatted}/day</td>
+          <td class="r mono">${fmt(cost)}</td>
         </tr>`;
       }).join('')
-    : '<tr><td colspan="5" style="color:#888;font-style:italic">No plant/equipment</td></tr>';
+    : '<tr><td colspan="5" class="hp-empty">No plant/equipment</td></tr>';
 
-  // ── Paint rows ──
+  // ── Finishing — ENGINE-EFFECTIVE quantities (mirrors computeQuoteTotals
+  //    auto-fill: blank qty on tonnes-unit rows falls back to finish tags,
+  //    then to shipped weight), floats trimmed to 3dp ──
+  const paintLabelMap = {
+    galvanise:'Hot-dip Galvanising', galvanise_spin:'Spin Galvanising', primer_tonne:'Primer (£/t)',
+    powder_coat_m:'Powder Coat (m²)', powder_coat_bay:'Powder Coat (bay)', intumescent_m:'Intumescent (m²)', touch_up:'Touch-up on Site'
+  };
   const paintRows = (q.paintRows || []);
   const paintHTML = paintRows.length > 0
     ? paintRows.map(r => {
-        const labelMap = {
-          galvanise:'Hot-dip Galvanising', primer_tonne:'Primer (£/t)', powder_coat_m:'Powder Coat (m²)',
-          powder_coat_bay:'Powder Coat (bay)', intumescent_m:'Intumescent (m²)', touch_up:'Touch-up on Site'
-        };
-        const label = r.label || labelMap[r.type] || r.type || 'Finish';
-        const cost  = (r.qty||0)*(r.rate||0);
+        const label = r.label || paintLabelMap[r.type] || r.type || 'Finish';
+        const rate  = parseFloat(r.rate) || 0;
+        let qty = parseFloat(r.qty) || 0, auto = false;
+        if (r.unit === 'tonnes') {
+          if (r.type === 'galvanise' && finishQty.galv_t > 0)            { if (!qty) { qty = finishQty.galv_t;   auto = true; } }
+          else if (r.type === 'primer_tonne' && finishQty.primer_t > 0)  { if (!qty) { qty = finishQty.primer_t; auto = true; } }
+          else if (!qty) { qty = shippedKg / 1000; auto = true; }
+        }
+        const cost = qty * rate;
+        const unitStr = r.unit === 'tonnes' ? 't' : r.unit === 'm2' ? 'm²' : (r.unit || '');
         return `<tr>
-          <td>${esc(label)}</td>
-          <td style="text-align:center">${r.qty || 0} ${r.unit === 'tonnes' ? 't' : r.unit === 'm2' ? 'm²' : ''}</td>
-          <td style="text-align:right">£${r.rate||0}/${r.unit==='tonnes'?'t':'m²'}</td>
-          <td colspan="1"></td>
-          <td style="text-align:right">${fmt(cost)}</td>
+          <td>${esc(label)}${auto ? ' <span style="font-size:9px;color:#888">(auto from takeoff)</span>' : ''}</td>
+          <td class="r">${fmtNum(qty)} ${unitStr}</td>
+          <td class="r">£${rate}/${unitStr || 'unit'}</td>
+          <td></td>
+          <td class="r mono">${fmt(cost)}</td>
         </tr>`;
       }).join('')
-    : '<tr><td colspan="5" style="color:#888;font-style:italic">No finishing specified</td></tr>';
+    : '<tr><td colspan="5" class="hp-empty">No finishing specified</td></tr>';
 
-  // ── Survey rows ──
+  // ── Survey (visits + parking/expenses) ──
   const surveyRows = (q.surveyVisitRows || []);
-  const surveyHTML = surveyRows.length > 0
+  const surveyParking = parseFloat(q.surveyParking) || 0;
+  const surveyHTML = (surveyRows.length > 0 || surveyParking > 0)
     ? surveyRows.map(r => {
         const visits = r.qty || r.visits || 1;
-        const cost = visits * (r.rate || 0);
         return `<tr>
           <td>${esc(r.label || r.type || 'Surveyor')}</td>
-          <td style="text-align:center">${visits} visit${visits !== 1 ? 's' : ''}</td>
-          <td style="text-align:right">£${r.rate || 0}/visit</td>
-          <td colspan="1"></td>
-          <td style="text-align:right">${fmt(cost)}</td>
+          <td class="r">${visits} visit${visits !== 1 ? 's' : ''}</td>
+          <td class="r">£${r.rate || 0}/visit</td>
+          <td></td>
+          <td class="r mono">${fmt(visits * (r.rate || 0))}</td>
+        </tr>`;
+      }).join('') + (surveyParking > 0 ? `<tr><td>Parking / expenses</td><td colspan="3"></td><td class="r mono">${fmt(surveyParking)}</td></tr>` : '')
+    : '<tr><td colspan="5" class="hp-empty">No survey scheduled</td></tr>';
+
+  // ── Delivery ──
+  const deliveryRows = (q.deliveryRows || []);
+  const deliveryHTML = deliveryRows.length > 0
+    ? deliveryRows.map(r => {
+        const qty = parseFloat(r.qty) || 1, rate = parseFloat(r.rate) || 0;
+        return `<tr>
+          <td>${esc(r.label || r.type || 'Delivery')}</td>
+          <td colspan="3" style="color:#666">${qty} × £${rate}</td>
+          <td class="r mono">${fmt(qty * rate)}</td>
         </tr>`;
       }).join('')
-    : '<tr><td colspan="5" style="color:#888;font-style:italic">No survey scheduled</td></tr>';
+    : '<tr><td colspan="5" class="hp-empty">No delivery</td></tr>';
 
   // ── Prelims ──
   const prelimRows = (q.prelimRows || []).filter(r => r.active !== false && (r.rate || 0) > 0);
   const prelimHTML = prelimRows.length > 0
     ? prelimRows.map(r => {
-        const isDaily = (rates.prelims?.[r.type]?.type === 'daily') || r.isDaily;
+        const isDaily = (typeof rates !== 'undefined' && rates.prelims?.[r.type]?.type === 'daily') || r.isDaily;
         const qty = r.qty || 1;
         const cost = isDaily ? qty * (r.rate || 0) : (r.rate || 0);
         const detail = isDaily ? `${qty} day${qty !== 1 ? 's' : ''} × £${r.rate || 0}/day` : `£${r.rate || 0} flat`;
-        return `<tr><td>${esc(r.label || r.type || 'Prelim')}</td><td colspan="3" style="color:#666">${detail}</td><td style="text-align:right">${fmt(cost)}</td></tr>`;
+        return `<tr><td>${esc(r.label || r.type || 'Prelim')}</td><td colspan="3" style="color:#666">${detail}</td><td class="r mono">${fmt(cost)}</td></tr>`;
       }).join('')
-    : '<tr><td colspan="5" style="color:#888;font-style:italic">No prelims</td></tr>';
+    : '<tr><td colspan="5" class="hp-empty">No prelims</td></tr>';
 
   // ── Travel distance (live calc from stored coords) ──
   let travelInfo = '';
@@ -21408,490 +21337,289 @@ function generateHandoverPack() {
   } else if ((q.siteAddress || '').trim()) {
     travelInfo = 'Use 📍 Estimate Travel button on Header tab to calculate';
   }
-  const totByType = {};
-  let totalKgAll = 0;
-  (q.takeoff || []).forEach(row => {
-    const prefix = (row.section||'').match(/^[A-Za-z]+/)?.[0]?.toUpperCase() || 'Other';
-    const kg = (parseFloat(row.kgm)||0) * (parseFloat(row.qty)||1) * (parseFloat(row.length)||0) / 1000;
-    totByType[prefix] = (totByType[prefix]||0) + kg;
-    totalKgAll += kg;
-  });
-  const takeoffSummaryHTML = totalKgAll > 0
-    ? Object.entries(totByType).sort((a,b)=>b[1]-a[1]).map(([type,kg]) =>
-        `<tr><td>${type}</td><td style="text-align:right">${(kg/1000).toFixed(3)}t</td><td style="text-align:right">${Math.round(kg/(totalKgAll||1)*100)}%</td></tr>`
-      ).join('') + `<tr style="font-weight:700;border-top:2px solid #1a1a2e"><td>TOTAL</td><td style="text-align:right">${(totalKgAll/1000).toFixed(3)}t</td><td></td></tr>`
-    : '<tr><td colspan="3" style="color:#888;font-style:italic">No takeoff data</td></tr>';
-
-  // Aliases — the redesigned HP template uses these names (consistent with generateQuotePDF)
-  const tkTotalKg   = totalKgAll;
-  const tkTotalCost = (q.takeoff||[]).reduce((s,r) =>
-    s + (parseFloat(r.length)||0)/1000 * (parseFloat(r.kgm)||0) * (parseFloat(r.qty)||1) * (parseFloat(r.rate)||0), 0);
-
-  // ── Exclusions / T&Cs ──
-  const exclusions = (q.projectTCs || '').trim();
-  const exclusionsHTML = exclusions
-    ? exclusions.split('\n').map(l => l.trim() ? `<li>${esc(l)}</li>` : '').join('')
-    : '<li style="color:#888;font-style:italic">No exclusions noted</li>';
-
   const siteAddr = (q.siteAddress || '').trim() || 'Not specified';
 
-  const html = `<!DOCTYPE html><html><head><meta charset="UTF-8">
-<title>Handover Pack — ${esc(q.ref)} ${esc(q.company)}</title>
+  // ── Steel price What-If ──
+  const _wiMaterial  = computed.material || 0;
+  const _wiTotal     = total || 0;
+  const _wiScenarios = steelPriceWhatIf(_wiMaterial, _wiTotal, marginPct || 20);
+  const fmtWI = v => '£' + Math.abs(Math.round(v)).toLocaleString('en-GB');
+  const whatifRowsHTML = _wiScenarios.map(s => {
+    const isDown  = s.delta < 0;
+    const sign    = s.totalDelta >= 0 ? '+' : '−';
+    const barWidth = Math.min(100, Math.abs(s.totalDelta / (_wiTotal || 1)) * 100 * 10).toFixed(1);
+    const barColor = isDown ? '#27ae60' : '#c0392b';
+    return `<tr class="${isDown ? 'down' : 'up'}">
+      <td>${s.label}<div class="wi-bar-wrap"><div class="wi-bar" style="width:${barWidth}%;background:${barColor}"></div></div></td>
+      <td class="r">${fmtWI(s.newMaterial)}</td>
+      <td class="r" style="font-weight:700">${fmtWI(s.newTotal)}</td>
+      <td class="r ${isDown ? 'neg' : 'pos'}">${sign}&thinsp;${fmtWI(s.totalDelta)}</td>
+      <td class="r">${fmtWI(s.marginAmt)} (${s.marginPct}%)</td>
+    </tr>`;
+  }).join('');
+  const baseRowHTML = `<tr class="base">
+    <td>Current (base)</td>
+    <td class="r">${fmtWI(_wiMaterial)}</td>
+    <td class="r">${fmtWI(_wiTotal)}</td>
+    <td class="r" style="color:#6b7280">—</td>
+    <td class="r">${fmtWI(marginAmt)} (${marginPct}%)</td>
+  </tr>`;
+  const whatifTableHTML = _wiScenarios.length >= 4
+    ? whatifRowsHTML.split('</tr>').filter(Boolean).map(r => r + '</tr>').reduce((acc, r, i) => {
+        if (i === 2) return acc + baseRowHTML + r;
+        return acc + r;
+      }, '')
+    : baseRowHTML + whatifRowsHTML;
+
+  // ── Assemble ─────────────────────────────────────────────
+  return `
 <style>
-  /* ── Reset & Base ── */
-  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-  body {
-    font-family: 'Helvetica Neue', Arial, sans-serif;
-    font-size: 10.5px;
-    line-height: 1.6;
-    color: #1a1a2e;
-    background: #fff;
-    -webkit-print-color-adjust: exact;
-    print-color-adjust: exact;
-  }
-  .page { padding: 12mm 15mm 14mm; max-width: 210mm; margin: 0 auto; }
-
-  /* ── Document Header ── */
-  .hdr {
-    display: flex;
-    justify-content: space-between;
-    align-items: flex-start;
-    margin-bottom: 16px;
-    padding-bottom: 14px;
-    border-bottom: 3px solid #1a1a2e;
-  }
-  .hdr-logo-line {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    margin-bottom: 6px;
-  }
-  .hdr-logo-text {
-    font-size: 18px;
-    font-weight: 900;
-    color: #1a1a2e;
-    letter-spacing: -0.3px;
-  }
-  .hdr-badge {
-    background: #D0021B;
-    color: #fff;
-    font-size: 8.5px;
-    font-weight: 800;
-    padding: 2px 8px;
-    border-radius: 2px;
-    text-transform: uppercase;
-    letter-spacing: 0.1em;
-  }
-  .hdr-meta { font-size: 10px; color: #555; line-height: 1.8; }
-  .hdr-meta strong { color: #1a1a2e; font-weight: 700; }
-  .hdr-right { text-align: right; flex-shrink: 0; }
-  .ref-box {
-    font-size: 26px;
-    font-weight: 900;
-    color: #D0021B;
-    letter-spacing: -0.5px;
-    line-height: 1;
-  }
-  .date-line { font-size: 9.5px; color: #888; margin-top: 4px; }
-
-  /* ── Confidential Strip ── */
-  .confidential {
-    background: #1a1a2e;
-    color: #fff;
-    font-size: 9px;
-    font-weight: 800;
-    text-align: center;
-    padding: 5px 10px;
-    letter-spacing: 0.2em;
-    text-transform: uppercase;
-    margin-bottom: 14px;
-    border-radius: 2px;
-  }
-
-  /* ── Section Module ── */
-  .section {
-    margin-bottom: 14px;
-    border-radius: 3px;
-    overflow: hidden;
-    border: 1px solid #dde0ee;
-    break-inside: avoid;
-    page-break-inside: avoid;
-  }
-  .sec-head {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 6px 11px;
-    font-size: 9.5px;
-    font-weight: 800;
-    text-transform: uppercase;
-    letter-spacing: 0.1em;
-    color: #fff;
-  }
-  .sec-head.navy  { background: #1a1a2e; }
-  .sec-head.red   { background: #D0021B; }
-  .sec-head.slate { background: #2c3e50; }
-  .sec-head.amber { background: #b45309; }
-  .sec-body { background: #fff; }
-
-  /* ── Info Grid (key-value pairs) ── */
-  .info-grid {
-    display: grid;
-    grid-template-columns: 130px 1fr;
-    gap: 0;
-    padding: 0;
-  }
-  .ig-label {
-    font-size: 9.5px;
-    font-weight: 700;
-    color: #6b7280;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    padding: 7px 11px;
-    border-bottom: 1px solid #eef0f6;
-    background: #f8f9fc;
-  }
-  .ig-value {
-    font-size: 10.5px;
-    color: #1a1a2e;
-    padding: 7px 11px;
-    border-bottom: 1px solid #eef0f6;
-    line-height: 1.5;
-  }
-  .ig-label:last-of-type, .ig-value:last-of-type { border-bottom: none; }
-
-  /* ── KPI Cards ── */
-  .kpi-row {
-    display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    gap: 0;
-    border-top: 1px solid #eef0f6;
-  }
-  .kpi-card {
-    padding: 12px 14px;
-    border-right: 1px solid #eef0f6;
-    text-align: center;
-  }
-  .kpi-card:last-child { border-right: none; }
-  .kpi-num {
-    font-size: 26px;
-    font-weight: 900;
-    color: #D0021B;
-    line-height: 1;
-    font-variant-numeric: tabular-nums;
-  }
-  .kpi-label {
-    font-size: 9px;
-    font-weight: 700;
-    color: #6b7280;
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
-    margin-top: 3px;
-  }
-  .kpi-sub { font-size: 9px; color: #9ca3af; margin-top: 2px; }
-
-  /* ── Tables ── */
-  table { width: 100%; border-collapse: collapse; font-size: 10.5px; }
-  thead th {
-    background: #f1f3f8;
-    color: #374151;
-    font-size: 9px;
-    font-weight: 800;
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
-    padding: 6px 10px;
-    text-align: left;
-    border-bottom: 1px solid #dde0ee;
-    white-space: nowrap;
-  }
-  thead th.r { text-align: right; }
-  tbody td {
-    padding: 7px 10px;
-    border-bottom: 1px solid #f0f1f6;
-    vertical-align: middle;
-    color: #1a1a2e;
-    line-height: 1.4;
-  }
-  tbody td.r { text-align: right; font-variant-numeric: tabular-nums; }
-  tbody td.mono { font-family: 'Courier New', monospace; }
-  tbody tr:last-child td { border-bottom: none; }
-  tbody tr:hover { background: #f9fafc; }
-  tfoot td {
-    padding: 7px 10px;
-    font-weight: 700;
-    border-top: 2px solid #1a1a2e;
-    background: #f1f3f8;
-  }
-  tfoot td.r { text-align: right; font-variant-numeric: tabular-nums; }
-
-  /* ── Tonnage bar ── */
-  .tonnage-bar {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 12px 14px;
-    background: #1a1a2e;
-    border-radius: 3px;
-    margin-bottom: 14px;
-    break-inside: avoid;
-  }
-  .tb-label { font-size: 9.5px; color: rgba(255,255,255,0.6); text-transform: uppercase; letter-spacing: 0.06em; }
-  .tb-val { font-size: 24px; font-weight: 900; color: #D0021B; letter-spacing: -0.5px; }
-  .tb-sub { font-size: 9.5px; color: rgba(255,255,255,0.55); }
-
-  /* ── What-If Table ── */
-  .wi-table { width: 100%; border-collapse: collapse; font-size: 10.5px; }
-  .wi-table thead th {
-    background: #1a1a2e;
-    color: #fff;
-    padding: 7px 10px;
-    font-size: 9px;
-    font-weight: 800;
-    text-transform: uppercase;
-    letter-spacing: 0.07em;
-    text-align: left;
-    border: none;
-  }
-  .wi-table thead th.r { text-align: right; }
-  .wi-table tbody td { padding: 7px 10px; border-bottom: 1px solid #eef0f6; vertical-align: middle; }
-  .wi-table tbody td.r { text-align: right; font-variant-numeric: tabular-nums; font-family: 'Courier New', monospace; }
-  .wi-table tr.down td { color: #14532d; background: #f0fdf4; }
-  .wi-table tr.up   td { color: #7f1d1d; background: #fff5f5; }
-  .wi-table tr.base td { font-weight: 700; background: #f8f9fc; color: #1a1a2e; }
-  .wi-table tr.base td:first-child::before { content: '▶ '; color: #D0021B; }
-  .neg { color: #15803d; font-weight: 700; }
-  .pos { color: #b91c1c; font-weight: 700; }
-  .wi-bar-wrap { height: 4px; background: #e5e7eb; border-radius: 2px; margin-top: 4px; overflow: hidden; }
-  .wi-bar { height: 100%; border-radius: 2px; }
-  .wi-note {
-    padding: 7px 11px;
-    font-size: 9.5px;
-    color: #6b7280;
-    background: #f8f9fc;
-    border-bottom: 1px solid #eef0f6;
-    line-height: 1.5;
-  }
-
-  /* ── Exclusions ── */
-  .excl-body {
-    padding: 10px 14px;
-    background: #fffbeb;
-    border-top: 1px solid #fde68a;
-  }
-  .excl-body li {
-    font-size: 10.5px;
-    color: #44312a;
-    line-height: 1.8;
-    margin-left: 14px;
-    list-style: disc;
-  }
-
-  /* ── Footer strip ── */
-  .doc-footer-strip {
-    margin-top: 16px;
-    padding-top: 10px;
-    border-top: 1px solid #dde0ee;
-    font-size: 9.5px;
-    color: #9ca3af;
-    display: flex;
-    justify-content: space-between;
-  }
-
-  /* ── Print ── */
-  @media print {
-    .no-print { display: none !important; }
-    body { font-size: 10px; }
-    .section { break-inside: avoid; page-break-inside: avoid; }
-    .tonnage-bar { break-inside: avoid; }
-  }
+  .hp { font-size:10.5px; color:#1a1a2e; line-height:1.6; }
+  .hp .hp-hdr { display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:16px; padding-bottom:14px; border-bottom:3px solid #1a1a2e; }
+  .hp .hp-logo-line { display:flex; align-items:center; gap:10px; margin-bottom:6px; }
+  .hp .hp-logo-text { font-size:18px; font-weight:900; color:#1a1a2e; letter-spacing:-0.3px; }
+  .hp .hp-badge { background:#D0021B; color:#fff; font-size:8.5px; font-weight:800; padding:2px 8px; border-radius:2px; text-transform:uppercase; letter-spacing:0.1em; }
+  .hp .hp-meta { font-size:10px; color:#555; line-height:1.8; }
+  .hp .hp-meta strong { color:#1a1a2e; font-weight:700; }
+  .hp .hp-ref { font-size:26px; font-weight:900; color:#D0021B; letter-spacing:-0.5px; line-height:1; }
+  .hp .hp-date { font-size:9.5px; color:#888; margin-top:4px; }
+  .hp .hp-confidential { background:#1a1a2e; color:#fff; font-size:9px; font-weight:800; text-align:center; padding:5px 10px; letter-spacing:0.2em; text-transform:uppercase; margin-bottom:14px; border-radius:2px; }
+  .hp .hp-section { margin-bottom:14px; border-radius:3px; overflow:hidden; border:1px solid #dde0ee; break-inside:avoid; page-break-inside:avoid; }
+  .hp .hp-sec-head { display:flex; align-items:center; gap:8px; padding:6px 11px; font-size:9.5px; font-weight:800; text-transform:uppercase; letter-spacing:0.1em; color:#fff; }
+  .hp .hp-sec-head.navy  { background:#1a1a2e; }
+  .hp .hp-sec-head.red   { background:#D0021B; }
+  .hp .hp-sec-head.slate { background:#2c3e50; }
+  .hp .hp-ig { display:grid; grid-template-columns:130px 1fr; }
+  .hp .hp-ig-label { font-size:9.5px; font-weight:700; color:#6b7280; text-transform:uppercase; letter-spacing:0.05em; padding:7px 11px; border-bottom:1px solid #eef0f6; background:#f8f9fc; }
+  .hp .hp-ig-value { font-size:10.5px; color:#1a1a2e; padding:7px 11px; border-bottom:1px solid #eef0f6; line-height:1.5; }
+  .hp .kpi-row { display:grid; grid-template-columns:repeat(4,1fr); }
+  .hp .kpi-card { padding:12px 10px; border-right:1px solid #eef0f6; text-align:center; }
+  .hp .kpi-card:last-child { border-right:none; }
+  .hp .kpi-num { font-size:24px; font-weight:900; color:#D0021B; line-height:1; font-variant-numeric:tabular-nums; }
+  .hp .kpi-label { font-size:9px; font-weight:700; color:#6b7280; text-transform:uppercase; letter-spacing:0.06em; margin-top:3px; }
+  .hp .kpi-sub { font-size:9px; color:#9ca3af; margin-top:2px; line-height:1.4; }
+  .hp table { width:100%; border-collapse:collapse; font-size:10.5px; }
+  .hp thead tr { background:#f1f3f8; }
+  .hp thead th { background:#f1f3f8; color:#374151; font-size:9px; font-weight:800; text-transform:uppercase; letter-spacing:0.06em; padding:6px 10px; text-align:left; border-bottom:1px solid #dde0ee; white-space:nowrap; }
+  .hp thead th.r { text-align:right; }
+  .hp tbody td { padding:6px 10px; border-bottom:1px solid #f0f1f6; vertical-align:middle; color:#1a1a2e; line-height:1.4; font-size:10.5px; }
+  .hp tbody tr:last-child td { border-bottom:none; }
+  .hp td.r, .hp th.r { text-align:right; font-variant-numeric:tabular-nums; }
+  .hp td.mono { font-family:'Courier New',monospace; }
+  .hp tfoot td { padding:6px 10px; font-weight:700; border-top:2px solid #1a1a2e; background:#f1f3f8; }
+  .hp .hp-empty { color:#9ca3af; font-style:italic; }
+  .hp .hp-note { padding:7px 11px; font-size:9.5px; color:#6b7280; background:#f8f9fc; border-top:1px solid #eef0f6; line-height:1.5; }
+  .hp .hp-drv { color:#888; font-size:9px; }
+  .hp .hp-area-sub td { font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:0.05em; color:#1a1a2e; background:#eef0f3; border-top:1px solid #d1d5db; border-bottom:1px solid #d1d5db; }
+  .hp .tonnage-bar { display:flex; justify-content:space-between; align-items:center; padding:12px 14px; background:#1a1a2e; border-radius:3px; margin-bottom:14px; break-inside:avoid; }
+  .hp .tb-label { font-size:9.5px; color:rgba(255,255,255,0.6); text-transform:uppercase; letter-spacing:0.06em; }
+  .hp .tb-val { font-size:24px; font-weight:900; color:#D0021B; letter-spacing:-0.5px; }
+  .hp .tb-sub { font-size:9.5px; color:rgba(255,255,255,0.55); }
+  .hp .hp-totals { border-top:2px solid #1a1a2e; }
+  .hp .hp-total-row { display:flex; justify-content:space-between; align-items:center; padding:7px 11px; font-size:11px; border-bottom:1px solid #eef0f6; }
+  .hp .hp-total-row span:last-child { font-family:'Courier New',monospace; font-variant-numeric:tabular-nums; }
+  .hp .hp-grand { background:#1a1a2e; color:#fff; padding:10px 12px; font-size:13px; font-weight:700; display:flex; justify-content:space-between; align-items:center; }
+  .hp .hp-grand .gv { color:#D0021B; font-size:16px; font-family:'Courier New',monospace; }
+  .hp .hp-kg-meta { padding:6px 11px; font-size:9.5px; color:#9ca3af; border-top:1px solid #eef0f6; }
+  .hp .wi-table tbody td { font-size:10.5px; }
+  .hp tr.down td { color:#14532d; background:#f0fdf4; }
+  .hp tr.up   td { color:#7f1d1d; background:#fff5f5; }
+  .hp tr.base td { font-weight:700; background:#f8f9fc; color:#1a1a2e; }
+  .hp tr.base td:first-child::before { content:'▶ '; color:#D0021B; }
+  .hp .neg { color:#15803d; font-weight:700; }
+  .hp .pos { color:#b91c1c; font-weight:700; }
+  .hp .wi-bar-wrap { height:4px; background:#e5e7eb; border-radius:2px; margin-top:4px; overflow:hidden; }
+  .hp .wi-bar { height:100%; border-radius:2px; }
+  .hp .wi-note { padding:7px 11px; font-size:9.5px; color:#6b7280; background:#f8f9fc; border-bottom:1px solid #eef0f6; line-height:1.5; }
+  .hp .hp-footer { margin-top:16px; padding-top:10px; border-top:1px solid #dde0ee; font-size:9.5px; color:#9ca3af; display:flex; justify-content:space-between; }
 </style>
-</head><body>
-<div class="no-print" style="background:#1a1a2e;padding:10px 20px;display:flex;justify-content:space-between;align-items:center;position:sticky;top:0;z-index:100">
-  <span style="color:#fff;font-weight:700;font-size:12px;letter-spacing:0.03em">ESTIMATING HANDOVER PACK — ${esc(q.ref)} / ${esc(q.company||'—')}</span>
-  <button onclick="window.print()" style="background:#D0021B;color:#fff;border:none;padding:7px 18px;border-radius:3px;font-size:12px;cursor:pointer;font-weight:700;letter-spacing:0.05em">🖨 PRINT / PDF</button>
-</div>
-
-<div class="page">
+<div class="hp">
 
   <!-- ── Document Header ── -->
-  <div class="hdr">
+  <div class="hp-hdr">
     <div>
-      <div class="hdr-logo-line">
-        <span class="hdr-logo-text">BAMA Fabrication Ltd</span>
-        <span class="hdr-badge">Handover Pack</span>
+      <div class="hp-logo-line">
+        <span class="hp-logo-text">BAMA Fabrication Ltd</span>
+        <span class="hp-badge">Handover Pack</span>
       </div>
-      <div class="hdr-meta">
+      <div class="hp-meta">
         <strong>Client:</strong> ${esc(q.company||'—')}<br>
         <strong>Contact:</strong> ${esc(q.contact||'—')}${q.phone ? ' &nbsp;·&nbsp; ' + esc(q.phone) : ''}${q.email ? ' &nbsp;·&nbsp; ' + esc(q.email) : ''}<br>
         <strong>Project:</strong> ${esc(q.qScope||q.comments||'—')}
       </div>
     </div>
-    <div class="hdr-right">
-      <div class="ref-box">${esc(q.ref)}${q.revision ? '&thinsp;Rev&thinsp;' + esc(q.revision) : ''}</div>
-      <div class="date-line">Prepared: ${today}</div>
+    <div style="text-align:right;flex-shrink:0">
+      <div class="hp-ref">${esc(q.ref)}${q.revision ? '&thinsp;Rev&thinsp;' + esc(q.revision) : ''}</div>
+      <div class="hp-date">Prepared: ${today}</div>
     </div>
   </div>
 
-  <div class="confidential">⚠ Internal Document — Not for Client Distribution ⚠</div>
+  <div class="hp-confidential">⚠ Internal Document — Not for Client Distribution ⚠</div>
 
-  <!-- ── Tonnage Banner ── -->
-  ${tkTotalKg > 0 ? `
+  <!-- ── Tonnage Banner — shipped weight INCLUDES fittings ── -->
+  ${shippedKg > 0 ? `
   <div class="tonnage-bar">
-    <div><div class="tb-label">Total Steelwork</div><div class="tb-val">${(tkTotalKg/1000).toFixed(2)} t</div></div>
-    <div style="text-align:center"><div class="tb-label">Weight (kg)</div><div class="tb-sub" style="font-size:14px;font-weight:700;color:#fff">${Math.round(tkTotalKg).toLocaleString('en-GB')} kg</div></div>
-    <div style="text-align:center"><div class="tb-label">Material Cost</div><div class="tb-sub" style="font-size:14px;font-weight:700;color:#fff">${fmt(tkTotalCost)}</div></div>
-    <div style="text-align:right"><div class="tb-label">Quote Total</div><div class="tb-sub" style="font-size:14px;font-weight:700;color:#D0021B">${fmt(computed.total)}</div></div>
+    <div><div class="tb-label">Total Steelwork (incl. fittings)</div><div class="tb-val">${fmtTonnes(shippedKg)} t</div></div>
+    <div style="text-align:center"><div class="tb-label">Steel + Fittings</div><div class="tb-sub" style="font-size:12px;font-weight:700;color:#fff">${fmtTonnes(steelKg)} t + ${fmtTonnes(fittingsKg)} t <span style="color:rgba(255,255,255,0.55);font-weight:400">(${fittingsPct}%)</span></div></div>
+    <div style="text-align:center"><div class="tb-label">Material Cost</div><div class="tb-sub" style="font-size:14px;font-weight:700;color:#fff">${fmt(computed.material)}</div></div>
+    <div style="text-align:right"><div class="tb-label">Quote Total</div><div class="tb-sub" style="font-size:14px;font-weight:700;color:#D0021B">${fmt(total)}</div></div>
   </div>` : ''}
 
   <!-- ── Site Information ── -->
-  <div class="section">
-    <div class="sec-head red">📍 Site Information</div>
-    <div class="sec-body">
-      <div class="info-grid">
-        <div class="ig-label">Site Address</div>
-        <div class="ig-value">${esc(siteAddr)}</div>
-        ${travelInfo ? `<div class="ig-label">Travel Estimate</div><div class="ig-value">${esc(travelInfo)}</div>` : ''}
-        <div class="ig-label">BOQ / Drawing Ref</div>
-        <div class="ig-value">${esc(q.boqRef||'—')}</div>
-        <div class="ig-label">Prepared By</div>
-        <div class="ig-value">${esc(q.preparedBy||'—')}</div>
-      </div>
+  <div class="hp-section">
+    <div class="hp-sec-head red">📍 Site Information</div>
+    <div class="hp-ig">
+      <div class="hp-ig-label">Site Address</div>
+      <div class="hp-ig-value">${esc(siteAddr)}</div>
+      ${travelInfo ? `<div class="hp-ig-label">Travel Estimate</div><div class="hp-ig-value">${esc(travelInfo)}</div>` : ''}
+      <div class="hp-ig-label">BOQ / Drawing Ref</div>
+      <div class="hp-ig-value">${esc(q.boqRef||'—')}</div>
+      <div class="hp-ig-label">Prepared By</div>
+      <div class="hp-ig-value">${esc(q.preparedBy||'—')}</div>
     </div>
   </div>
 
-  <!-- ── Production Hours ── -->
-  <div class="section">
-    <div class="sec-head navy">⚙ Production Hours</div>
-    <div class="sec-body">
-      <div class="kpi-row">
-        <div class="kpi-card">
-          <div class="kpi-num">${q.fabHours||0}</div>
-          <div class="kpi-label">Fabrication</div>
-          <div class="kpi-sub">@ £${q.fabRate||45}/hr &nbsp;=&nbsp; ${fmt((q.fabHours||0)*(q.fabRate||45))}</div>
-        </div>
-        <div class="kpi-card">
-          <div class="kpi-num">${q.fabpackHours||0}</div>
-          <div class="kpi-label">Approval &amp; Fab Pack</div>
-          <div class="kpi-sub">@ £${q.fabpackRate||50}/hr &nbsp;=&nbsp; ${fmt((q.fabpackHours||0)*(q.fabpackRate||50))}</div>
-        </div>
-        <div class="kpi-card">
-          <div class="kpi-num">${(q.structEngHours||0)+(q.designHours||0)}</div>
-          <div class="kpi-label">Design / Engineering</div>
-          <div class="kpi-sub">${[q.structEngHours>0?`SE: ${q.structEngHours}h`:'', q.designHours>0?`Draft: ${q.designHours}h`:''].filter(Boolean).join(' · ')||'—'}</div>
-        </div>
-      </div>
+  <!-- ── Cost Element Breakdown ── -->
+  <div class="hp-section">
+    <div class="hp-sec-head navy">💷 Cost Element Breakdown</div>
+    <table>
+      <thead><tr><th>Cost Element</th><th class="r" style="width:130px">Net Cost (£)</th><th class="r" style="width:80px">% of Sub</th></tr></thead>
+      <tbody>${costHTML}</tbody>
+    </table>
+    <div class="hp-totals">
+      <div class="hp-total-row"><span>Sub-total</span><span>${fmtGBP(subtotal)}</span></div>
+      <div class="hp-total-row" style="color:#2c3e50"><span>Margin (${marginPct}%)</span><span>${fmtGBP(marginAmt)}</span></div>
+      <div class="hp-grand"><span>TOTAL (incl. margin)</span><span class="gv">${fmtGBP(total)}</span></div>
+      ${shippedKg > 0 ? `<div class="hp-kg-meta">Cost per kg (incl. fittings): £${(subtotal/shippedKg).toFixed(2)}/kg net &nbsp;·&nbsp; £${((computed.totalExact||total)/shippedKg).toFixed(2)}/kg sell</div>` : ''}
     </div>
   </div>
 
-  <!-- ── Steel Tonnage ── -->
-  <div class="section">
-    <div class="sec-head navy">⚖ Steel Tonnage Breakdown</div>
-    <div class="sec-body">
-      <table>
-        <thead><tr><th>Profile Group</th><th class="r">Weight (t)</th><th class="r">% of Total</th></tr></thead>
-        <tbody>${takeoffSummaryHTML}</tbody>
-      </table>
+  <!-- ── Production Hours — main wizard + wizard items ── -->
+  <div class="hp-section">
+    <div class="hp-sec-head navy">⚙ Production Hours</div>
+    <div class="kpi-row">
+      <div class="kpi-card">
+        <div class="kpi-num">${fmtNum(fabHrs + wizFabHrs)}</div>
+        <div class="kpi-label">Fabrication hrs</div>
+        <div class="kpi-sub">main ${fmtNum(fabHrs)}h @ £${fabRate}/hr${wizFabHrs > 0 ? ` · wizards ${fmtNum(wizFabHrs)}h` : ''}<br>cost ${fmt(computed.fabrication)}</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-num">${fmtNum(fabpackHrs)}</div>
+        <div class="kpi-label">Approval &amp; Fab Pack</div>
+        <div class="kpi-sub">@ £${q.fabpackRate||50}/hr = ${fmt(fabpackHrs*(q.fabpackRate||50))}</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-num">${fmtNum(designHrs + structEngHrs + architectHrs + connDesignHrs + wizDesignHrs)}</div>
+        <div class="kpi-label">Design / Engineering hrs</div>
+        <div class="kpi-sub">${[designHrs>0?`Draft ${fmtNum(designHrs)}h`:'', structEngHrs>0?`SE ${fmtNum(structEngHrs)}h`:'', architectHrs>0?`Arch ${fmtNum(architectHrs)}h`:'', connDesignHrs>0?`Conn ${fmtNum(connDesignHrs)}h`:'', wizDesignHrs>0?`wizards ${fmtNum(wizDesignHrs)}h`:''].filter(Boolean).join(' · ')||'—'}<br>cost ${fmt(computed.design)}</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-num">${fmtNum(instDays + wizInstallDays)}</div>
+        <div class="kpi-label">Installation days</div>
+        <div class="kpi-sub">main ${fmtNum(instDays)}d × ${instOps} ops${wizInstallDays > 0 ? ` · wizards ${fmtNum(wizInstallDays)}d` : ''}<br>cost ${fmt(computed.installation)}</div>
+      </div>
     </div>
+    ${steelKg > 0 && (fabHrs + wizFabHrs) > 0 ? `<div class="hp-note">Productivity: ${((fabHrs + wizFabHrs)/(steelKg/1000)).toFixed(1)} fab hrs/t (steel tonnes, excl. fittings — comparable with the 8/12/14 hrs/t basis)</div>` : ''}
   </div>
+
+  ${wizardSectionHTML}
+
+  ${scheduleSectionHTML}
 
   <!-- ── Installation Labour ── -->
-  <div class="section">
-    <div class="sec-head red">👷 Installation Labour</div>
-    <div class="sec-body">
-      <table>
-        <thead><tr><th>Role</th><th class="r">Qty</th><th class="r">Days</th><th class="r">Day Rate</th><th class="r">Cost</th></tr></thead>
-        <tbody>${labourHTML}</tbody>
-      </table>
-    </div>
+  <div class="hp-section">
+    <div class="hp-sec-head red">👷 Installation Labour${instOps > 0 || instDays > 0 ? ` — ${instOps} operative${instOps!==1?'s':''} · ${fmtNum(instDays)} day${instDays!==1?'s':''} on site` : ''}</div>
+    <table>
+      <thead><tr><th>Role</th><th class="r">Qty</th><th class="r">Days</th><th class="r">Day Rate</th><th class="r">Cost</th></tr></thead>
+      <tbody>${labourHTML}</tbody>
+    </table>
   </div>
 
   <!-- ── Plant & Equipment ── -->
-  <div class="section">
-    <div class="sec-head navy">🏗 Plant &amp; Equipment</div>
-    <div class="sec-body">
-      <table>
-        <thead><tr><th>Equipment / Item</th><th class="r" colspan="3">Detail</th><th class="r">Cost</th></tr></thead>
-        <tbody>${plantHTML}</tbody>
-      </table>
-    </div>
+  <div class="hp-section">
+    <div class="hp-sec-head navy">🏗 Plant &amp; Equipment</div>
+    <table>
+      <thead><tr><th>Equipment / Item</th><th class="r" colspan="3">Detail</th><th class="r">Cost</th></tr></thead>
+      <tbody>${plantHTML}</tbody>
+    </table>
   </div>
 
   <!-- ── Finishing ── -->
-  <div class="section">
-    <div class="sec-head navy">🎨 Surface Finishing</div>
-    <div class="sec-body">
-      <table>
-        <thead><tr><th>Finish Type</th><th class="r">Quantity</th><th class="r">Rate</th><th></th><th class="r">Cost</th></tr></thead>
-        <tbody>${paintHTML}</tbody>
-      </table>
-    </div>
+  <div class="hp-section">
+    <div class="hp-sec-head navy">🎨 Surface Finishing</div>
+    <table>
+      <thead><tr><th>Finish Type</th><th class="r">Quantity</th><th class="r">Rate</th><th></th><th class="r">Cost</th></tr></thead>
+      <tbody>${paintHTML}</tbody>
+    </table>
   </div>
 
   <!-- ── Survey ── -->
-  <div class="section">
-    <div class="sec-head navy">📐 Survey</div>
-    <div class="sec-body">
-      <table>
-        <thead><tr><th>Attendee</th><th class="r">Visits</th><th class="r">Rate</th><th></th><th class="r">Cost</th></tr></thead>
-        <tbody>${surveyHTML}</tbody>
-      </table>
-    </div>
+  <div class="hp-section">
+    <div class="hp-sec-head navy">📐 Survey</div>
+    <table>
+      <thead><tr><th>Attendee</th><th class="r">Visits</th><th class="r">Rate</th><th></th><th class="r">Cost</th></tr></thead>
+      <tbody>${surveyHTML}</tbody>
+    </table>
+  </div>
+
+  <!-- ── Delivery ── -->
+  <div class="hp-section">
+    <div class="hp-sec-head navy">🚚 Delivery</div>
+    <table>
+      <thead><tr><th>Item</th><th colspan="3">Detail</th><th class="r">Cost</th></tr></thead>
+      <tbody>${deliveryHTML}</tbody>
+    </table>
   </div>
 
   <!-- ── Prelims ── -->
-  <div class="section">
-    <div class="sec-head navy">📋 Preliminaries</div>
-    <div class="sec-body">
-      <table>
-        <thead><tr><th>Item</th><th colspan="3">Detail</th><th class="r">Cost</th></tr></thead>
-        <tbody>${prelimHTML}</tbody>
-      </table>
-    </div>
+  <div class="hp-section">
+    <div class="hp-sec-head navy">📋 Preliminaries</div>
+    <table>
+      <thead><tr><th>Item</th><th colspan="3">Detail</th><th class="r">Cost</th></tr></thead>
+      <tbody>${prelimHTML}</tbody>
+    </table>
   </div>
 
   <!-- ── Steel Price Sensitivity ── -->
-  <div class="section">
-    <div class="sec-head slate">📈 Steel Price Sensitivity — What-If Analysis</div>
-    <div class="sec-body">
-      <div class="wi-note">
-        ${_wiMaterial > 0
-          ? `Fixed costs &amp; margin (${_wiMarginPct}%) held constant. Variable: raw steel material cost — currently <strong>£${Math.round(_wiMaterial).toLocaleString('en-GB')}</strong>.`
-          : `<em>No material cost — add takeoff rows with £/kg rates to populate this analysis.</em>`}
-      </div>
-      ${_wiMaterial > 0 ? `
-      <table class="wi-table">
-        <thead>
-          <tr>
-            <th>Market Scenario</th>
-            <th class="r">Steel Material</th>
-            <th class="r">New Total</th>
-            <th class="r">± Change</th>
-            <th class="r">Margin</th>
-          </tr>
-        </thead>
-        <tbody>${whatifTableHTML}</tbody>
-      </table>` : ''}
+  <div class="hp-section">
+    <div class="hp-sec-head slate">📈 Steel Price Sensitivity — What-If Analysis</div>
+    <div class="wi-note">
+      ${_wiMaterial > 0
+        ? `Fixed costs &amp; margin (${marginPct}%) held constant. Variable: raw steel material cost — currently <strong>£${Math.round(_wiMaterial).toLocaleString('en-GB')}</strong>.`
+        : `<em>No material cost — add takeoff rows with £/kg rates to populate this analysis.</em>`}
     </div>
+    ${_wiMaterial > 0 ? `
+    <table class="wi-table">
+      <thead><tr>
+        <th>Market Scenario</th>
+        <th class="r">Steel Material</th>
+        <th class="r">New Total</th>
+        <th class="r">± Change</th>
+        <th class="r">Margin</th>
+      </tr></thead>
+      <tbody>${whatifTableHTML}</tbody>
+    </table>` : ''}
   </div>
 
-  ${q.pricingMode === 'area' ? `<div class="section">${buildInternalAreaTableHtml(q)}</div>` : ''}
+  ${q.pricingMode === 'area' ? buildInternalAreaTableHtml(q) : ''}
 
   <!-- T&Cs / Exclusions / Clarifications (same format as client quote) -->
   ${buildTcHtml(q)}
 
   <!-- ── Footer ── -->
-  <div class="doc-footer-strip">
+  <div class="hp-footer">
     <span>Prepared by ${esc(q.preparedBy||'BAMA Fabrication')} &nbsp;·&nbsp; Quoted ${esc(q.date||today)} &nbsp;·&nbsp; Ref ${esc(q.ref||'—')}</span>
     <span>INTERNAL — NOT FOR CLIENT DISTRIBUTION</span>
   </div>
 
-</div><!-- /page -->
-</body></html>`;
+</div><!-- /hp -->`;
+}
 
-  const win = window.open('', '_blank', 'width=960,height:1100');
-  if (!win) { toast('Popup blocked — please allow popups for this site and try again', 'error'); return; }
-  win.document.write(html);
-  win.document.close();
+function generateHandoverPack() {
+  const q = getQuote();
+  if (!q) { toast('No quote selected', 'error'); return; }
+  const revStr = q.revision ? ` · ${q.revision}` : '';
+  openPdfWindow(buildPdfPage(`Handover Pack — ${escHtml(q.ref)}${revStr}`, buildHandoverPackHtml(q)));
 }
 
 // ============================================================
@@ -22174,7 +21902,7 @@ const HELP_CONTENT = {
           <li><span class="h-step-num">2</span><div><strong>Takeoff</strong> — every steel member: section, length, qty, finish. Drives tonnage and material cost.</div></li>
           <li><span class="h-step-num">3</span><div><strong>Calcs</strong> — fab hours, crew, plant, delivery, prelims, margin. Use ⚡ Wizard to auto-fill.</div></li>
           <li><span class="h-step-num">4</span><div><strong>Quotation</strong> — client-facing summary, auto-filled. Set margin with the slider.</div></li>
-          <li><span class="h-step-num">5</span><div><strong>PDF menu</strong> — client quote, internal breakdown, or full handover pack.</div></li>
+          <li><span class="h-step-num">5</span><div><strong>PDF menu</strong> — client quote, or the full internal Handover Pack (also as Quote + Handover combined).</div></li>
         </ul>
         <div class="h-tip">The quote auto-saves to the cloud on every change. Use the ? button on any tab for context-specific help.</div>
       </div>
@@ -22443,9 +22171,8 @@ const HELP_CONTENT = {
         <div class="h-heading"><span class="h-icon">📄</span> Which PDF to use</div>
         <ul class="h-steps">
           <li><span class="h-step-num">1</span><div><strong>Quote (client-facing)</strong> — clean commercial quote with consolidated lines and grand total. <strong>Send this to the client.</strong></div></li>
-          <li><span class="h-step-num">2</span><div><strong>Cost Breakdown</strong> — internal. Full cost breakdown, margin %, fab hours, What-If steel price analysis. <strong>Never send to client.</strong></div></li>
-          <li><span class="h-step-num">3</span><div><strong>Quote + Breakdown</strong> — both in one window. Internal use, printing and filing.</div></li>
-          <li><span class="h-step-num">4</span><div><strong>Handover Pack</strong> — full internal estimating package: site info, hours, labour, plant, finishing, prelims, What-If. File this with the job when won.</div></li>
+          <li><span class="h-step-num">2</span><div><strong>Quote + Handover</strong> — client quote and handover pack in one window. Internal use, printing and filing.</div></li>
+          <li><span class="h-step-num">3</span><div><strong>Handover Pack</strong> — the full internal estimating document (merged with the old Cost Breakdown): cost element breakdown with margin %, full steel section schedule with fittings, production hours <em>including staircase/spiral/balustrade wizard labour</em>, installation crew, plant, finishing, survey, delivery, prelims and What-If steel price analysis. <strong>Never send to client.</strong> File this with the job when won.</div></li>
         </ul>
         <div class="h-tip">All PDFs open in a new tab. Use browser Print → Save as PDF to save or share.</div>
       </div>
@@ -22460,7 +22187,7 @@ const HELP_CONTENT = {
         <div class="h-faq"><div class="h-q">Can I email the PDF directly?</div>
         <div class="h-a">Yes — click ✉ Send in the toolbar. Opens a pre-filled email with the client quote attached.</div></div>
         <div class="h-faq"><div class="h-q">Steel Section Schedule by area</div>
-        <div class="h-a">When the takeoff has rows in more than one area, the Steel Section Schedule on the client quote automatically groups members under each area name (with a per-area weight subtotal), so the client and the team can see exactly what's included where. With a single area — or no areas — it stays a flat list. The Total Steel Weight figures are unchanged either way. Don't want the schedule on the client PDF at all? Flip <b>Steel Schedule on PDF</b> off in the Calcs summary panel (next to the deposit toggle) — default is on, and the internal cost breakdown always keeps its own schedule regardless.</div></div>
+        <div class="h-a">When the takeoff has rows in more than one area, the Steel Section Schedule on the client quote automatically groups members under each area name (with a per-area weight subtotal), so the client and the team can see exactly what's included where. With a single area — or no areas — it stays a flat list. The Total Steel Weight figures are unchanged either way. Don't want the schedule on the client PDF at all? Flip <b>Steel Schedule on PDF</b> off in the Calcs summary panel (next to the deposit toggle) — default is on, and the internal Handover Pack always keeps its own schedule regardless.</div></div>
         <div class="h-faq"><div class="h-q">Importing an old quote priced before QB</div>
         <div class="h-a">Use <strong>📥 Import old quote</strong> in the sidebar to bring a pre-QB quote into the pipeline. Drop the original PDF and AI reads the header and line totals; you can also type the basics manually. Imported quotes carry an <strong>IMPORTED</strong> badge, skip the takeoff/calc engine entirely, and take their price straight from the document — shown in an editable "Quote value" field on the Header tab and as editable line items on the Quotation tab. Filter to just these via the 📥 Imported button on the Pipeline tab. To convert a quote you already opened, use <strong>📥 Backfill from PDF</strong> in the toolbar — it marks the quote imported and fills blank fields from the PDF without overwriting anything you've already edited.</div></div>
       </div>`
