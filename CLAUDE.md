@@ -736,6 +736,31 @@ mark-fabricated step). Migration: `api/sql/add-staged-fabrication.sql`.
 
 ### Office / Company Docs session notes (2026-08-08, afternoon)
 
+- **Policy Studio (ERP-owned policies).** New `Policies` +
+  `DirectorSignatures` tables (`api/sql/create-policies.sql`, new tables — no
+  restart), `api/src/functions/policies.js` (CRUD + issue transitions
+  logChange'd, GET/POST `/api/director-signature`). Frontend panel at the top
+  of Office ▸ Company Docs: import existing docx (mammoth, added to
+  office.html) or PDF — AI structures sections **VERBATIM** (two-engine: it
+  never rewrites compliance wording), section editor, native-jsPDF house-style
+  renderer `drawPolicyPDF` with the AUTHORISATION block (statement, signature
+  image, signed by/date, next review, revision history) ON the last page.
+  One-click sign via stored director signature (canvas capture first time,
+  offer to save).
+- **Option B revision model — the whole trick.** Staff acknowledgements are
+  keyed to the SharePoint FILE id everywhere (mobile Sign Policies tile,
+  register modal, ✍ markers). So: re-issuing the SAME revision overwrites the
+  same file via PUT `/items/{id}/content` → stable file id → staff signatures
+  persist. A content edit on an issued policy bumps the revision (two-button
+  save: "Save (same rev)" for typo fixes vs "Save as Rev N+1"), clears the
+  file id → next issue creates a NEW file → acks reset naturally. Zero
+  changes to the acknowledgements schema or mobile app.
+- **Register integration.** Every issue updates the SAME CompanyDocuments row
+  (company_document_id link) — issue_date, expiry_date = +review_months, file
+  ids — so ED reminders and the duplicate-row trap are handled by
+  construction. A `policy_director` acknowledgement is also posted per issue,
+  feeding the existing ✍ staleness markers.
+
 - **Policy annual review = director e-signature.** `POLICY_REVIEW_MONTHS = 12`
   in shared.js. `docDirAuthState(fileId)` classifies the latest director
   signature per file as ok / stale (>12 months) / none. Table ✍ marker is

@@ -48166,6 +48166,26 @@ function renderDocsTab() {
       <div style="max-width:1300px">
         <div id="docAlertStrip" style="display:none;cursor:pointer;background:#3b1a1a;border:1px solid var(--red);border-radius:8px;padding:8px 14px;font-size:12.5px;color:#f0b4b4;margin-bottom:12px"></div>
 
+        <!-- Policy Studio: ERP-owned policies, signed on the document -->
+        <div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:14px 16px;margin-bottom:14px">
+          <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:6px">
+            <h3 style="margin:0;font-size:15px">🖋 Policy Studio</h3>
+            <button class="btn btn-primary btn-sm" onclick="polsOpenEditor()">＋ New policy</button>
+            <label class="btn btn-ghost btn-sm" style="cursor:pointer">📥 Import docx / PDF
+              <input type="file" accept=".docx,.pdf" style="display:none" onchange="polsImportFiles(this.files);this.value=''">
+            </label>
+            <button class="btn btn-ghost btn-sm" onclick="polsLoad()">↻</button>
+            <span id="polsImportStatus" style="font-size:12px;color:var(--accent)"></span>
+          </div>
+          <p style="font-size:11.5px;color:var(--muted);margin:0 0 8px;line-height:1.55">
+            Policies owned by the ERP: the wording lives here, the PDF is regenerated in the house style with the
+            director authorisation <strong>on the document</strong> — one click to re-sign each year, no Word.
+            Import mines your existing policies <strong>verbatim</strong> (check the extraction against the original before saving).
+            Re-signing the same revision keeps staff signatures; a content change bumps the revision and staff sign again.
+          </p>
+          <div id="polsList" style="border:1px solid var(--border);border-radius:8px;overflow:hidden"><div style="color:var(--muted);font-size:12.5px;padding:10px">Loading…</div></div>
+        </div>
+
         <!-- Drop zone -->
         <div id="docDz"
              ondragover="event.preventDefault();this.style.borderColor='var(--accent)'"
@@ -48215,6 +48235,7 @@ function renderDocsTab() {
       </div>`;
   }
   loadCompanyDocs();
+  polsLoad();
 }
 
 // ── Drag & drop → AI parse queue ────────────────────────────────────────────
@@ -48606,6 +48627,512 @@ async function polFileRegister(d) {
   const regName = `${base} - Signature Register.pdf`.replace(/[~"#%&*:<>?{|}/\\]/g, '-');
   await uploadFileToFolder(parentId, regName, await blob.arrayBuffer(), 'application/pdf', drive);
   return blob;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// POLICY STUDIO — ERP-owned policies (2026-08-08)
+//
+// Content lives in the Policies table as sections JSON; the PDF is
+// regenerated on demand in the house style with the director authorisation
+// block ON the document (native jsPDF — never html2canvas). Import mines
+// existing docx/PDF policies VERBATIM (two-engine principle: AI structures,
+// it never rewrites compliance wording).
+//
+// Revision model (option B): staff read-and-sign acknowledgements are keyed
+// to the SharePoint FILE id everywhere (mobile tile, register modal, ✍
+// markers). Re-issuing the SAME revision overwrites the same file → stable
+// file id → staff signatures persist. A revision bump creates a NEW file →
+// signatures reset naturally. Zero schema changes to acknowledgements.
+// ═══════════════════════════════════════════════════════════════════════════
+let _polsRows = [], _polsEditing = null, _polsDirty = false, _polsBaselineSections = '';
+
+async function polsLoad() {
+  const host = document.getElementById('polsList');
+  if (!host) return;
+  try {
+    _polsRows = await api.get('/api/policies');
+    polsRenderList();
+  } catch (e) {
+    host.innerHTML = `<div style="color:var(--red);font-size:12.5px;padding:8px 0">Failed to load: ${escapeHtml(e.message)}<br><span style="color:var(--muted);font-size:11px">Fresh deploy? Run api/sql/create-policies.sql first.</span></div>`;
+  }
+}
+
+function polsReviewInfo(p) {
+  // Review clock: issued_at + review_months (the linked register row carries
+  // the same date as expiry_date for the ED alert strip).
+  if (p.status !== 'issued' || !p.issued_at) return { cls: 'draft', badge: '<span style="color:var(--muted);font-size:11px">draft</span>' };
+  const due = new Date(p.issued_at); due.setMonth(due.getMonth() + (p.review_months || 12));
+  const days = Math.floor((due - new Date()) / 86400000);
+  if (days < 0) return { cls: 'overdue', due, badge: `<span style="background:#3b1a1a;color:#ff6b6b;border:1px solid #ff6b6b;border-radius:5px;padding:2px 7px;font-size:11px;font-weight:700">REVIEW OVERDUE ${-days}d</span>` };
+  if (days <= 60) return { cls: 'soon', due, badge: `<span style="background:#3b2f0f;color:#eab308;border:1px solid #eab308;border-radius:5px;padding:2px 7px;font-size:11px;font-weight:700">review in ${days}d</span>` };
+  return { cls: 'ok', due, badge: `<span style="color:#3ecf8e;font-size:11px">✓ review ${due.toLocaleDateString('en-GB')}</span>` };
+}
+
+function polsRenderList() {
+  const host = document.getElementById('polsList');
+  if (!host) return;
+  if (!_polsRows.length) {
+    host.innerHTML = '<div style="color:var(--muted);font-size:12.5px;padding:8px 0">No ERP-owned policies yet — import your existing ones (drop a docx/PDF on the left) or start blank.</div>';
+    return;
+  }
+  host.innerHTML = _polsRows.map(p => {
+    const rev = polsReviewInfo(p);
+    return `<div style="display:flex;align-items:center;gap:10px;padding:8px 10px;border-bottom:1px solid var(--border);font-size:12.5px">
+      <span style="font-family:var(--font-mono);font-size:11px;color:var(--accent);min-width:64px">${escapeHtml(p.ref || '—')}</span>
+      <span style="font-weight:600;flex:1">${p.web_url ? `<a href="${escapeHtml(p.web_url)}" target="_blank" style="color:var(--text);text-decoration:underline dotted">${escapeHtml(p.title)}</a>` : escapeHtml(p.title)}</span>
+      <span style="color:var(--muted);font-size:11px;white-space:nowrap">Rev ${p.revision}</span>
+      ${rev.badge}
+      <span style="white-space:nowrap">
+        <button class="btn btn-ghost btn-sm" onclick="polsPreview(${p.id})" title="Preview PDF">👁</button>
+        <button class="btn btn-ghost btn-sm" onclick="polsEdit(${p.id})" title="Edit content">✏️</button>
+        <button class="btn btn-sm" style="background:var(--accent);color:#111;font-weight:700" onclick="polsIssue(${p.id})" title="${p.status === 'issued' ? 'Re-sign & re-issue — one click, staff signatures on this revision are kept' : 'Issue & sign for the first time'}">✍ ${p.status === 'issued' ? 'Re-sign' : 'Issue & sign'}</button>
+        <button class="btn btn-ghost btn-sm" onclick="polsDelete(${p.id})" title="Delete (soft)" style="color:var(--red)">🗑</button>
+      </span>
+    </div>`;
+  }).join('');
+}
+
+// ── Import: docx via mammoth (verbatim text), PDF via AI read; both are then
+//    STRUCTURED into sections verbatim — the model never rewrites wording. ──
+async function polsImportFiles(fileList) {
+  const f = fileList && fileList[0];
+  if (!f) return;
+  const status = document.getElementById('polsImportStatus');
+  const set = t => { if (status) status.textContent = t; };
+  try {
+    let payload;
+    if (/\.docx$/i.test(f.name)) {
+      if (typeof mammoth === 'undefined') { toast('Word reader not loaded — refresh the page', 'error'); return; }
+      set('Reading Word document…');
+      const buf = await f.arrayBuffer();
+      const { value: raw } = await mammoth.extractRawText({ arrayBuffer: buf });
+      set('Structuring sections (verbatim)…');
+      payload = [{ type: 'text', text: `Below is the full plain text of an existing company policy. Split it into sections. Return ONLY JSON, no markdown:
+{"ref":"policy number as printed e.g. POL001, or null","title":"the policy title as printed","sections":[{"heading":"section heading as printed","body":"the section's full text"}]}
+CRITICAL RULES: this is a compliance document — copy the wording VERBATIM, character for character. Do not rewrite, summarise, modernise or correct anything. Do not invent headings; if a chunk has no heading use "". Drop only page numbers, headers/footers and old signature/date lines at the very end (they are being replaced by an electronic authorisation block).
+
+---
+${raw.slice(0, 60000)}` }];
+    } else if (f.type === 'application/pdf' || /\.pdf$/i.test(f.name)) {
+      set('Reading PDF…');
+      const uri = await _fileToDataUri(f);
+      payload = [
+        { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: uri.split(',')[1] } },
+        { type: 'text', text: `This is an existing company policy. Transcribe it into sections. Return ONLY JSON, no markdown:
+{"ref":"policy number as printed e.g. POL001, or null","title":"the policy title as printed","sections":[{"heading":"section heading as printed","body":"the section's full text"}]}
+CRITICAL RULES: this is a compliance document — transcribe the wording VERBATIM. Do not rewrite, summarise or correct anything. Do not invent headings; if a chunk has no heading use "". Drop only page numbers, headers/footers and old signature/date lines at the very end (they are being replaced by an electronic authorisation block).` }];
+    } else { toast('Drop a .docx or .pdf policy', 'error'); return; }
+
+    const result = await callClaude({ model: 'claude-sonnet-4-6', max_tokens: 16000, messages: [{ role: 'user', content: payload }] });
+    const text = (result.content?.find(b => b.type === 'text')?.text || '').trim();
+    const s = text.indexOf('{'), e = text.lastIndexOf('}');
+    const parsed = JSON.parse(text.slice(s, e + 1));
+    if (!parsed.sections || !parsed.sections.length) throw new Error('no sections extracted');
+    set('');
+    // Straight into the editor for the eyeball check — nothing saved yet.
+    polsOpenEditor(null, {
+      ref: parsed.ref || '', title: parsed.title || f.name.replace(/\.[^.]+$/, ''),
+      category: 'policy', revision: 1, review_months: 12,
+      sections: parsed.sections.map(x => ({ heading: String(x.heading || ''), body: String(x.body || '') }))
+    });
+    toast(`Extracted ${parsed.sections.length} sections — check the wording against the original before saving`, 'success');
+  } catch (err) {
+    console.error('Policy import failed', err);
+    set('');
+    toast('Import failed: ' + err.message, 'error');
+  }
+}
+
+// ── Editor (self-injecting modal) ────────────────────────────────────────────
+function _polsEnsureEditor() {
+  if (document.getElementById('polsEditor')) return;
+  const div = document.createElement('div');
+  div.innerHTML = `
+  <div id="polsEditor" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.65);z-index:1000;align-items:center;justify-content:center;padding:20px">
+    <div style="background:var(--card);border:1px solid var(--border);border-radius:12px;width:100%;max-width:860px;max-height:94vh;display:flex;flex-direction:column;overflow:hidden">
+      <div style="padding:14px 20px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;gap:10px">
+        <h3 id="polsEdTitle" style="margin:0;font-size:16px;flex:1">Policy</h3>
+        <button class="btn btn-ghost btn-sm" onclick="polsCloseEditor()">✕</button>
+      </div>
+      <div style="padding:16px 20px;overflow-y:auto;flex:1">
+        <div style="display:grid;grid-template-columns:110px 1fr 130px 110px;gap:10px;margin-bottom:12px">
+          <div><label style="font-size:11px;color:var(--muted);display:block;margin-bottom:3px">Ref</label>
+            <input id="polsFRef" placeholder="POL001" style="width:100%;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:7px 10px;color:var(--text);box-sizing:border-box"></div>
+          <div><label style="font-size:11px;color:var(--muted);display:block;margin-bottom:3px">Title *</label>
+            <input id="polsFTitle" style="width:100%;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:7px 10px;color:var(--text);box-sizing:border-box"></div>
+          <div><label style="font-size:11px;color:var(--muted);display:block;margin-bottom:3px">Category</label>
+            <select id="polsFCat" style="width:100%;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:7px 8px;color:var(--text)">
+              <option value="policy">Policy</option><option value="hs">H&amp;S</option><option value="ra_ssow">RA / SSoW</option>
+            </select></div>
+          <div><label style="font-size:11px;color:var(--muted);display:block;margin-bottom:3px">Review (months)</label>
+            <input id="polsFRevMonths" type="number" min="1" value="12" style="width:100%;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:7px 10px;color:var(--text);box-sizing:border-box"></div>
+        </div>
+        <div id="polsSections"></div>
+        <button class="btn btn-ghost btn-sm" onclick="polsAddSection()">＋ Add section</button>
+      </div>
+      <div style="padding:12px 20px;border-top:1px solid var(--border);display:flex;gap:10px;align-items:center">
+        <span id="polsEdStatus" style="font-size:12px;color:var(--muted);flex:1"></span>
+        <button class="btn btn-ghost btn-sm" onclick="polsCloseEditor()">Cancel</button>
+        <button class="btn btn-ghost btn-sm" id="polsSaveMinorBtn" style="display:none" onclick="polsSave(false)" title="Typo / formatting fix — same revision, staff signatures kept">💾 Save (same rev)</button>
+        <button class="btn btn-primary btn-sm" id="polsSaveBtn" onclick="polsSave(true)">💾 Save</button>
+      </div>
+    </div>
+  </div>`;
+  document.body.appendChild(div.firstElementChild);
+}
+
+function polsOpenEditor(p, preset) {
+  _polsEnsureEditor();
+  _polsEditing = p || null;
+  const v = p ? { ...p, sections: JSON.parse(p.sections || '[]') } : (preset || { ref: '', title: '', category: 'policy', revision: 1, review_months: 12, sections: [{ heading: '', body: '' }] });
+  document.getElementById('polsEdTitle').textContent = p ? `${p.ref || ''} ${p.title} — Rev ${p.revision}`.trim() : 'New policy';
+  document.getElementById('polsFRef').value = v.ref || '';
+  document.getElementById('polsFTitle').value = v.title || '';
+  document.getElementById('polsFCat').value = v.category || 'policy';
+  document.getElementById('polsFRevMonths').value = v.review_months || 12;
+  _polsBaselineSections = JSON.stringify(v.sections || []);
+  polsRenderSections(v.sections || []);
+  // An issued policy gets the two-button save: content change = revision
+  // bump (staff re-sign); minor correction keeps the revision (option B).
+  const issued = p && p.status === 'issued';
+  document.getElementById('polsSaveMinorBtn').style.display = issued ? '' : 'none';
+  document.getElementById('polsSaveBtn').textContent = issued ? `💾 Save as Rev ${(p.revision || 1) + 1}` : '💾 Save';
+  document.getElementById('polsEdStatus').textContent = issued ? 'Content change = new revision (staff sign again). Minor typo fix = same revision (signatures kept).' : '';
+  document.getElementById('polsEditor').style.display = 'flex';
+}
+
+function polsRenderSections(secs) {
+  const host = document.getElementById('polsSections');
+  host.dataset.count = secs.length;
+  host.innerHTML = secs.map((s, i) => `
+    <div style="border:1px solid var(--border);border-radius:8px;padding:10px;margin-bottom:10px" data-sec="${i}">
+      <div style="display:flex;gap:8px;margin-bottom:6px;align-items:center">
+        <input class="pols-h" value="${escapeHtml(s.heading || '')}" placeholder="Section heading (blank = continuation)"
+          style="flex:1;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:6px 10px;color:var(--text);font-weight:600;box-sizing:border-box">
+        <button class="btn btn-ghost btn-sm" onclick="polsMoveSection(${i},-1)" title="Move up">▲</button>
+        <button class="btn btn-ghost btn-sm" onclick="polsMoveSection(${i},1)" title="Move down">▼</button>
+        <button class="btn btn-ghost btn-sm" onclick="polsRemoveSection(${i})" title="Remove section" style="color:var(--red)">✕</button>
+      </div>
+      <textarea class="pols-b" rows="5" style="width:100%;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:8px 10px;color:var(--text);resize:vertical;box-sizing:border-box;font-size:12.5px;line-height:1.55">${escapeHtml(s.body || '')}</textarea>
+    </div>`).join('');
+}
+
+function polsCollectSections() {
+  return Array.from(document.querySelectorAll('#polsSections [data-sec]')).map(el => ({
+    heading: el.querySelector('.pols-h').value.trim(),
+    body: el.querySelector('.pols-b').value
+  })).filter(s => s.heading || s.body.trim());
+}
+function polsAddSection()      { const s = polsCollectSections(); s.push({ heading: '', body: '' }); polsRenderSections(s); }
+function polsRemoveSection(i)  { const s = polsCollectSections(); s.splice(i, 1); polsRenderSections(s.length ? s : [{ heading: '', body: '' }]); }
+function polsMoveSection(i, d) { const s = polsCollectSections(); const j = i + d; if (j < 0 || j >= s.length) return; [s[i], s[j]] = [s[j], s[i]]; polsRenderSections(s); }
+function polsCloseEditor()     { document.getElementById('polsEditor').style.display = 'none'; _polsEditing = null; }
+
+async function polsSave(allowBump) {
+  const title = document.getElementById('polsFTitle').value.trim();
+  if (!title) { toast('Title is required', 'error'); return; }
+  const secs = polsCollectSections();
+  if (!secs.length) { toast('At least one section is required', 'error'); return; }
+  const body = {
+    ref: document.getElementById('polsFRef').value.trim() || null,
+    title, category: document.getElementById('polsFCat').value,
+    review_months: +document.getElementById('polsFRevMonths').value || 12,
+    sections: JSON.stringify(secs)
+  };
+  try {
+    if (_polsEditing) {
+      const contentChanged = JSON.stringify(secs) !== _polsBaselineSections;
+      if (_polsEditing.status === 'issued' && contentChanged && allowBump) {
+        body.revision = (_polsEditing.revision || 1) + 1;
+        body.status = 'draft';               // must be re-issued & re-signed
+        body.sharepoint_file_id = null;      // new revision = NEW file on issue → staff acks reset
+        body.web_url = null; body.file_name = null;
+      }
+      await api.put(`/api/policies/${_polsEditing.id}`, body);
+      toast(body.revision ? `Saved as Rev ${body.revision} — issue & sign it when ready (staff will re-sign)` : 'Saved', 'success');
+    } else {
+      await api.post('/api/policies', body);
+      toast('Policy created — issue & sign it when ready', 'success');
+    }
+    polsCloseEditor(); polsLoad();
+  } catch (e) { toast('Save failed: ' + e.message, 'error'); }
+}
+
+async function polsDelete(id) {
+  const p = _polsRows.find(r => r.id === id); if (!p) return;
+  const ok = await bamaConfirm({ title: 'Delete policy?', tone: 'danger', confirmText: 'Delete', icon: '🗑',
+    body: `Delete <strong>${escapeHtml(p.title)}</strong> from the studio? The delete is soft; already-issued PDFs in SharePoint and the register entry are untouched.` });
+  if (!ok) return;
+  try { await api.delete(`/api/policies/${id}`); toast('Deleted', 'success'); polsLoad(); }
+  catch (e) { toast('Delete failed: ' + e.message, 'error'); }
+}
+
+// ── House-style PDF (native jsPDF — PDF generation rule, CLAUDE.md) ─────────
+async function drawPolicyPDF(p, auth) {
+  const JsPDFCtor = await resolveJsPDFCtor();
+  if (!JsPDFCtor) throw new Error('jsPDF not loaded on this page');
+  await loadLogoDataUri();
+  const logo = (typeof _logoDataUriCache !== 'undefined' && _logoDataUriCache) || '';
+  const doc = new JsPDFCtor({ unit: 'mm', format: 'a4' });
+  const W = 210, M = 18, CW = W - 2 * M;
+  const secs = typeof p.sections === 'string' ? JSON.parse(p.sections || '[]') : (p.sections || []);
+  let y = 16;
+
+  const header = () => {
+    if (logo) {
+      try {
+        const pr = doc.getImageProperties(logo);
+        const h = 12, w = h * pr.width / pr.height;
+        doc.addImage(logo, 'PNG', M, 10, w, h);
+      } catch (_) {}
+    }
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(9); doc.setTextColor(224, 94, 0);
+    doc.text('BAMA FABRICATION LTD', W - M, 13, { align: 'right' });
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5); doc.setTextColor(120, 120, 125);
+    doc.text('11 Enterprise Way, Enterprise Park, Yaxley, Peterborough PE7 3WY', W - M, 17.5, { align: 'right' });
+    doc.setDrawColor(224, 94, 0); doc.setLineWidth(0.5); doc.line(M, 25, W - M, 25);
+  };
+  const pageBreak = need => {
+    if (y + need <= 278) return;
+    doc.addPage(); header(); y = 33;
+  };
+
+  header(); y = 34;
+  doc.setFont('helvetica', 'bold'); doc.setFontSize(16); doc.setTextColor(20, 20, 24);
+  for (const ln of doc.splitTextToSize(p.title, CW)) { doc.text(ln, M, y); y += 7.5; }
+  doc.setFont('helvetica', 'normal'); doc.setFontSize(9); doc.setTextColor(110, 110, 115);
+  const issued = auth ? new Date(auth.signed_at) : (p.issued_at ? new Date(p.issued_at) : new Date());
+  doc.text(`${p.ref ? p.ref + '  ·  ' : ''}Revision ${p.revision}  ·  Issued ${issued.toLocaleDateString('en-GB')}`, M, y);
+  y += 9;
+
+  doc.setTextColor(30, 30, 34);
+  for (const s of secs) {
+    if (s.heading) {
+      pageBreak(14);
+      doc.setFont('helvetica', 'bold'); doc.setFontSize(11.5); doc.setTextColor(224, 94, 0);
+      for (const ln of doc.splitTextToSize(s.heading, CW)) { doc.text(ln, M, y); y += 5.6; }
+      y += 1;
+    }
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(10); doc.setTextColor(30, 30, 34);
+    for (const para of String(s.body || '').split(/\n{2,}/)) {
+      const lines = doc.splitTextToSize(para.replace(/\n/g, ' ').trim(), CW);
+      for (const ln of lines) { pageBreak(6); doc.text(ln, M, y); y += 5.1; }
+      y += 2.5;
+    }
+    y += 2;
+  }
+
+  // ── Authorisation block — ON the document, replaces Word date-editing ─────
+  pageBreak(78);
+  y += 4;
+  doc.setDrawColor(224, 94, 0); doc.setLineWidth(0.5); doc.line(M, y, W - M, y); y += 7;
+  doc.setFont('helvetica', 'bold'); doc.setFontSize(11.5); doc.setTextColor(224, 94, 0);
+  doc.text('AUTHORISATION', M, y); y += 6;
+  doc.setFont('helvetica', 'italic'); doc.setFontSize(9); doc.setTextColor(60, 60, 66);
+  for (const ln of doc.splitTextToSize(POLICY_DIRECTOR_STATEMENT, CW)) { doc.text(ln, M, y); y += 4.4; }
+  y += 3;
+  const boxY = y;
+  doc.setDrawColor(150, 150, 155); doc.setLineWidth(0.3);
+  doc.rect(M, boxY, 78, 28);
+  if (auth && auth.signature) {
+    try { doc.addImage(auth.signature, 'PNG', M + 4, boxY + 3, 66, 20); } catch (_) {}
+  }
+  doc.setFont('helvetica', 'normal'); doc.setFontSize(9); doc.setTextColor(30, 30, 34);
+  const due = new Date(issued); due.setMonth(due.getMonth() + (p.review_months || 12));
+  const meta = [
+    ['Signed by', auth ? auth.signer_name + '  —  Director' : '________________________  —  Director'],
+    ['For and on behalf of', 'BAMA Fabrication Ltd'],
+    ['Date signed', auth ? issued.toLocaleDateString('en-GB') : '____ / ____ / ________'],
+    ['Next review due', due.toLocaleDateString('en-GB')]
+  ];
+  let my = boxY + 5;
+  for (const [k, v] of meta) {
+    doc.setFont('helvetica', 'bold'); doc.setTextColor(110, 110, 115); doc.text(k, M + 84, my);
+    doc.setFont('helvetica', 'normal'); doc.setTextColor(30, 30, 34); doc.text(String(v), M + 122, my);
+    my += 6;
+  }
+  y = boxY + 34;
+
+  // Revision history table
+  const hist = (typeof p.history === 'string' ? JSON.parse(p.history || '[]') : (p.history || [])).slice(-6);
+  if (auth) hist.push({ revision: p.revision, issued_at: issued.toISOString(), issued_by: auth.signer_name });
+  if (hist.length) {
+    pageBreak(12 + hist.length * 5.4);
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(8.5); doc.setTextColor(110, 110, 115);
+    doc.text('Rev', M, y); doc.text('Issued', M + 16, y); doc.text('Authorised by', M + 46, y);
+    y += 1.6; doc.setDrawColor(200, 200, 205); doc.line(M, y, M + 110, y); y += 4.2;
+    doc.setFont('helvetica', 'normal'); doc.setTextColor(30, 30, 34);
+    const seen = new Set();
+    for (const h of hist) {
+      const key = h.revision + '|' + String(h.issued_at).slice(0, 10);
+      if (seen.has(key)) continue; seen.add(key);
+      doc.text(String(h.revision), M, y);
+      doc.text(new Date(h.issued_at).toLocaleDateString('en-GB'), M + 16, y);
+      doc.text(String(h.issued_by || ''), M + 46, y);
+      y += 5.4;
+    }
+  }
+
+  // Footer: Page X of Y
+  const pages = doc.getNumberOfPages();
+  for (let i = 1; i <= pages; i++) {
+    doc.setPage(i);
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5); doc.setTextColor(150, 150, 155);
+    doc.text(`${p.ref ? p.ref + ' · ' : ''}Rev ${p.revision} · Signed electronically via the BAMA ERP`, M, 290);
+    doc.text(`Page ${i} of ${pages}`, W - M, 290, { align: 'right' });
+  }
+  return doc;
+}
+
+async function polsPreview(id) {
+  const p = _polsRows.find(r => r.id === id); if (!p) return;
+  try {
+    const doc = await drawPolicyPDF(p, null);
+    const blob = doc.output('blob');
+    console.log('[Policy PDF] blob size:', blob.size, 'bytes');
+    window.open(URL.createObjectURL(blob), '_blank');
+  } catch (e) { toast('Preview failed: ' + e.message, 'error'); }
+}
+
+// ── One-click issue & sign ───────────────────────────────────────────────────
+async function polsGetDirectorSig() {
+  let sig = null;
+  try { sig = await api.get('/api/director-signature'); } catch (_) {}
+  if (sig && sig.signature) return sig;
+  // First time: capture + offer to store for one-click signing.
+  return new Promise(resolve => {
+    if (!document.getElementById('polsSigModal')) {
+      const div = document.createElement('div');
+      div.innerHTML = `
+      <div id="polsSigModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.65);z-index:1001;align-items:center;justify-content:center;padding:20px">
+        <div style="background:var(--card);border:1px solid var(--border);border-radius:12px;width:100%;max-width:520px;padding:18px 20px">
+          <h3 style="margin:0 0 10px;font-size:15px">Director signature</h3>
+          <input id="polsSigName" placeholder="Full name" style="width:100%;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:7px 10px;color:var(--text);box-sizing:border-box;margin-bottom:8px">
+          <canvas id="polsSigCanvas" width="560" height="140" style="width:100%;height:120px;background:#fff;border:1px solid var(--border);border-radius:8px;touch-action:none"></canvas>
+          <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--muted);margin:8px 0;cursor:pointer">
+            <input type="checkbox" id="polsSigStore" checked> Save my signature for one-click signing next time
+          </label>
+          <div style="display:flex;gap:8px">
+            <button class="btn btn-ghost btn-sm" onclick="_polsSigPadInit()">Clear</button>
+            <span style="flex:1"></span>
+            <button class="btn btn-ghost btn-sm" onclick="_polsSigResolve(null)">Cancel</button>
+            <button class="btn btn-primary btn-sm" onclick="_polsSigDone()">Use signature</button>
+          </div>
+        </div>
+      </div>`;
+      document.body.appendChild(div.firstElementChild);
+    }
+    window._polsSigResolver = resolve;
+    document.getElementById('polsSigModal').style.display = 'flex';
+    getCurrentMicrosoftUser().then(me => {
+      const el = document.getElementById('polsSigName');
+      if (el && !el.value) el.value = (me && me.name) || '';
+    }).catch(() => {});
+    _polsSigPadInit();
+  });
+}
+let _polsSigData = null;
+function _polsSigPadInit() {
+  const c = document.getElementById('polsSigCanvas'); if (!c) return;
+  const ctx = c.getContext('2d');
+  ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, c.width, c.height);
+  ctx.strokeStyle = '#111'; ctx.lineWidth = 2.2; ctx.lineCap = 'round';
+  let drawing = false, touched = false;
+  const pos = e => { const r = c.getBoundingClientRect(); const p = e.touches ? e.touches[0] : e; return [(p.clientX - r.left) * (c.width / r.width), (p.clientY - r.top) * (c.height / r.height)]; };
+  c.onmousedown = c.ontouchstart = e => { e.preventDefault(); drawing = true; touched = true; const [x, y] = pos(e); ctx.beginPath(); ctx.moveTo(x, y); };
+  c.onmousemove = c.ontouchmove = e => { if (!drawing) return; e.preventDefault(); const [x, y] = pos(e); ctx.lineTo(x, y); ctx.stroke(); };
+  c.onmouseup = c.onmouseleave = c.ontouchend = () => { drawing = false; _polsSigData = touched ? c.toDataURL('image/png') : null; };
+  _polsSigData = null;
+}
+function _polsSigResolve(v) {
+  document.getElementById('polsSigModal').style.display = 'none';
+  const r = window._polsSigResolver; window._polsSigResolver = null;
+  if (r) r(v);
+}
+async function _polsSigDone() {
+  const name = (document.getElementById('polsSigName').value || '').trim();
+  if (!name) { toast('Enter your name', 'error'); return; }
+  if (!_polsSigData) { toast('Sign in the box first', 'error'); return; }
+  const sig = { signer_name: name, signature: _polsSigData };
+  if (document.getElementById('polsSigStore').checked) {
+    try { await api.post('/api/director-signature', sig); toast('Signature stored — future signing is one click', 'success'); }
+    catch (e) { console.warn('signature store failed:', e.message); }
+  }
+  _polsSigResolve(sig);
+}
+
+async function polsIssue(id) {
+  const p = _polsRows.find(r => r.id === id); if (!p) return;
+  const sig = await polsGetDirectorSig();
+  if (!sig) return;
+  const sameFile = !!p.sharepoint_file_id;   // same revision → overwrite → staff acks persist
+  const go = await bamaConfirm({
+    title: p.status === 'issued' ? 'Re-sign & re-issue?' : 'Issue & sign?', icon: '✍', confirmText: '✍ Sign & issue',
+    body: `<strong>${escapeHtml((p.ref ? p.ref + ' — ' : '') + p.title)}</strong> Rev ${p.revision} will be signed by <strong>${escapeHtml(sig.signer_name)}</strong> (Director), rendered as a PDF with the authorisation on the document, and filed to SharePoint.<br><span style="color:var(--muted);font-size:12px">${sameFile ? 'Same revision → the existing file is overwritten in place, staff signatures on this revision are KEPT.' : 'First issue of this revision → new file, staff sign it from the mobile app.'} Next review: ${(() => { const t = new Date(); t.setMonth(t.getMonth() + (p.review_months || 12)); return t.toLocaleDateString('en-GB'); })()}.</span>`
+  });
+  if (!go) return;
+  try {
+    toast('Building the signed PDF…', 'success');
+    const now = new Date();
+    const auth = { signer_name: sig.signer_name, signature: sig.signature, signed_at: now.toISOString() };
+    const doc = await drawPolicyPDF(p, auth);
+    const blob = doc.output('blob');
+    console.log('[Policy PDF] blob size:', blob.size, 'bytes');
+    const fileName = `${p.ref ? p.ref + ' — ' : ''}${p.title} — Rev ${p.revision}.pdf`.replace(/[~"#%&*:<>?{|}/\\]/g, '-');
+    const drive = p.drive_id || BAMA_DRIVE_ID;
+    let fileId = p.sharepoint_file_id, webUrl = p.web_url;
+
+    if (sameFile) {
+      // Overwrite in place — file id is stable, staff acks on this revision persist.
+      const token = await getToken();
+      const res = await fetch(`https://graph.microsoft.com/v1.0/drives/${drive}/items/${fileId}/content`, {
+        method: 'PUT', headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/pdf' },
+        body: await blob.arrayBuffer()
+      });
+      if (!res.ok) throw new Error('overwrite upload ' + res.status);
+      const meta = await res.json(); webUrl = meta.webUrl || webUrl;
+    } else {
+      const folder = await docTargetFolder(p.category, now.toISOString().slice(0, 10));
+      const up = await uploadFileToFolder(folder.id, fileName, await blob.arrayBuffer(), 'application/pdf', BAMA_DRIVE_ID);
+      fileId = up.id; webUrl = up.webUrl || null;
+    }
+
+    // Register row: SAME row updated on every issue — no duplicate-row trap.
+    const due = new Date(now); due.setMonth(due.getMonth() + (p.review_months || 12));
+    const regBody = {
+      category: p.category, title: p.title, doc_ref: p.ref || null,
+      issuer: 'BAMA Fabrication Ltd', issue_date: now.toISOString().slice(0, 10),
+      expiry_date: due.toISOString().slice(0, 10), reminder_days: 60,
+      file_name: fileName, sharepoint_file_id: fileId, drive_id: BAMA_DRIVE_ID, web_url: webUrl,
+      notes: `Rev ${p.revision} — ERP-owned policy (Policy Studio)`
+    };
+    let cdId = p.company_document_id;
+    if (cdId) { await api.put(`/api/company-documents/${cdId}`, regBody); }
+    else { const r = await api.post('/api/company-documents', regBody); cdId = r.id; }
+
+    // History + policy row
+    const hist = JSON.parse(p.history || '[]');
+    hist.push({ revision: p.revision, issued_at: now.toISOString(), issued_by: sig.signer_name });
+    await api.put(`/api/policies/${p.id}`, {
+      status: 'issued', issued_at: now.toISOString(), issued_by: sig.signer_name,
+      sharepoint_file_id: fileId, drive_id: BAMA_DRIVE_ID, web_url: webUrl, file_name: fileName,
+      company_document_id: cdId, history: JSON.stringify(hist)
+    });
+
+    // Director acknowledgement — feeds the ✍ staleness markers and the
+    // register modal exactly like a manual director sign.
+    await api.post('/api/acknowledgements', {
+      doc_type: 'policy_director', doc_ref: p.title, doc_file_id: fileId, doc_web_url: webUrl,
+      signer_name: sig.signer_name, signer_company: 'BAMA Fabrication Ltd — Director',
+      statement: POLICY_DIRECTOR_STATEMENT, signature: sig.signature
+    }).catch(e => console.warn('director ack failed (PDF is filed):', e.message));
+
+    toast(`Signed & issued — ${fileName}`, 'success');
+    polsLoad(); loadCompanyDocs();
+  } catch (e) {
+    console.error('Policy issue failed', e);
+    toast('Issue failed: ' + e.message, 'error');
+  }
 }
 
 // ── Authorised issue: the ORIGINAL policy PDF with a Document Authorisation
@@ -50222,6 +50749,7 @@ const HELP_TOPICS = [
   ]},
   { area: 'Company / Employee / Supplier Docs', icon: '📁', items: [
     { q: 'Where do insurances and policies live?', a: 'Office ▸ Company Docs. Drag PDFs in and the reader pulls out the reference, issuer and expiry for you to eyeball and save. If a drop looks like a new version of something already on the register you are offered a one-tap Renew — the old entry is archived instead of lingering as expired. Expiry reminders show on the Estimating Dashboard.' },
+    { q: 'Policy Studio — policies signed ON the document', a: 'Office ▸ Company Docs ▸ Policy Studio. Import an existing policy (docx/PDF — extracted verbatim, you eyeball it) or write one; the PDF is regenerated in the house style with the authorisation block on the last page. Issue & sign is one click once your signature is stored. Re-signing the same revision overwrites the same file so staff signatures are kept; editing the content bumps the revision, staff re-sign, and the register/reminders update automatically.' },
     { q: 'Annual policy review / director signature', a: 'Open the ✍ on a policy in Company Docs and sign as director — the electronic signature IS the annual review, and after signing you can move the review date forward 12 months in one tap (no more editing dates in Word). Signing also files an "— Authorised <date>.pdf" next to the original: the policy itself with a Document Authorisation page (statement, signature, dates) appended — upload THAT file to Constructionline / CHAS / clients. The ✍ marker shows green (authorised, in date), red (annual review overdue) or amber (never signed). Staff read-and-sign from the mobile app ▸ Sign Policies.' },
     { q: 'Employee documents and contracts', a: 'Office ▸ Employees ▸ Docs on a person: their register plus a contract, offer letter and new-starter sheet generator. The contract/offer wording is still a DRAFT template — check it before any real use.' },
     { q: 'Supplier approval status', a: 'Office ▸ Suppliers: each supplier has an approval status (approved / conditional / suspended) with a review-due date, plus a document area for their insurances and quality certs.' },

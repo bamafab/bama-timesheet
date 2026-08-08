@@ -1101,6 +1101,17 @@
       "seedForms": []
     },
     {
+      "script": "create-policies.sql",
+      "title": "ERP-owned company policies: content lives here as structured sections,",
+      "kind": "structural",
+      "tables": [
+        "DirectorSignatures",
+        "Policies"
+      ],
+      "columns": [],
+      "seedForms": []
+    },
+    {
       "script": "create-projects.sql",
       "title": "Projects table \u2014 created from a Won quote, mirrors quote ref with C prefix",
       "kind": "structural",
