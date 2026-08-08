@@ -11878,7 +11878,7 @@ function renderTakeoff() {
               onclick="event.stopPropagation()"
               onchange="toggleAreaSelect('${areaId}', this.checked)"
               title="Select every row in this area"
-              style="cursor:pointer;accent-color:var(--accent);margin:0 2px">
+              style="cursor:pointer;accent-color:var(--accent);margin:0 2px;width:14px;height:14px;padding:0;flex:0 0 auto">
             ${isUnspec
               ? `<span class="area-header-name" style="color:var(--muted);font-style:italic">Unspecified</span>`
               : `<input class="area-name-input" value="${escHtml(areaName)}"
