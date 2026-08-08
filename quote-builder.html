@@ -15609,8 +15609,50 @@ function wizTogglePanel(header) {
   header.closest('.wiz-panel').classList.toggle('open');
 }
 
+// Rewrite every hardcoded £ figure on the wizard tiles from the LIVE Global
+// Rates (rates.*) so the wizard always shows what will actually be charged.
+// Tiles whose key has no Global Rates entry keep their static text.
+function wizSyncRateLabels() {
+  const money = v => '£' + Number(v || 0).toLocaleString('en-GB');
+  const setSpan = (tile, txt) => {
+    const span = tile.querySelector('span');
+    if (span) span.textContent = txt;
+  };
+  document.querySelectorAll('#wiz-survey-tiles .wiz-tile').forEach(t => {
+    const def = (rates.survey || {})[t.dataset.survey];
+    if (def) setSpan(t, money(def.rate) + '/visit');
+  });
+  const unitLbl = u => u === 'tonnes' ? '/tonne' : u === 'hrs' ? '/hr' : u === 'bays' ? '/bay' : u ? '/' + u : '';
+  document.querySelectorAll('#wiz-finish-tiles .wiz-tile').forEach(t => {
+    const def = (rates.paint || {})[t.dataset.finish];
+    if (def) setSpan(t, money(def.rate) + unitLbl(def.unit));
+  });
+  document.querySelectorAll('#wiz-crane-tiles .wiz-tile').forEach(t => {
+    if (t.dataset.crane === 'none') return;
+    const def = (rates.plant || {})[t.dataset.crane];
+    if (def) setSpan(t, money(def.rate) + '/day');
+  });
+  document.querySelectorAll('.wiz-mewp-row').forEach(row => {
+    const key = row.dataset.mewp;
+    if (!key || key === 'none' || key === 'scaffold_system') return;
+    const def = (rates.plant || {})[key];
+    const span = row.querySelector('.wiz-mewp-controls span[style*="min-width"]');
+    if (def && span) span.textContent = money(def.rate) + '/day';
+  });
+  document.querySelectorAll('#wiz-prelim-tiles .wiz-tile').forEach(t => {
+    const def = (rates.prelims || {})[t.dataset.prelim];
+    if (def) setSpan(t, money(def.rate) + (def.type === 'daily' ? '/day' : ''));
+  });
+  document.querySelectorAll('#wiz-delivery-tiles .wiz-tile').forEach(t => {
+    const ty = t.dataset.delivery;
+    if (ty === 'auto' || ty === 'client_collect') return;
+    setSpan(t, money(wizDeliveryRate(ty)) + '/load');
+  });
+}
+
 function openWizard(q) {
   _wizQuote = q;
+  wizSyncRateLabels();
   buildWizSummary(q);
   wizSuggestCrew(q);
   // Reset tiles to defaults
@@ -15686,20 +15728,11 @@ function openWizard(q) {
 }
 
 function closeWizard() {
+  // Cancel just closes. It used to force-apply the auto-suggested fab/design/
+  // fabpack hours onto the quote on EVERY close — silently overwriting values
+  // the user had applied or edited, and re-injecting the (double-counted)
+  // fabpack allowance. Removed 2026-08-08: only ✓ Apply writes to the quote.
   document.getElementById('wizardModal').classList.remove('active');
-  if (_wizQuote) {
-    const cf = resolveFabComplexityFactor(_wizQuote);
-    const { totalHours: fabHrs } = autoFabHours(_wizQuote.takeoff, cf);
-    const { draughtHrs, structEngHrs, fabpackHrs } = autoDesignHours(_wizQuote.takeoff);
-    _wizQuote.fabHours = fabHrs;
-    _wizQuote.designHours = draughtHrs;
-    _wizQuote.structEngHrs = structEngHrs;
-    _wizQuote.fabpackHours = fabpackHrs;
-    const set = (id,v) => { const el=document.getElementById(id); if(el) el.value=v; };
-    set('fab-hours', fabHrs); set('struct-eng-hours', structEngHrs);
-    set('design-hours', draughtHrs); set('fabpack-hours', fabpackHrs);
-    saveAll(); recalcAll();
-  }
 }
 
 function openWizardManual() {
@@ -15712,14 +15745,17 @@ function buildWizSummary(q) {
   const takeoff = q.takeoff || [];
   let totalKg = 0;
   const byProfile = {};
-  let heaviest = null, heaviestKg = 0;
+  let heaviest = null, heaviestPieceKg = 0;
   const missingKgm = [];
 
   takeoff.forEach(row => {
     const { kg, isValid } = rowWeight(row);
     if (!isValid) { if (row.type && !missingKgm.includes(row.type)) missingKgm.push(row.type); return; }
     totalKg += kg;
-    if (kg > heaviestKg) { heaviestKg = kg; heaviest = row; }
+    // Heaviest = heaviest SINGLE piece, not the row total — a lone 12m/2t
+    // beam outweighs 34 pieces totalling 2.5t (Mateusz, 2026-08-08).
+    const pieceKg = kg / (parseFloat(row.qty) || 1);
+    if (pieceKg > heaviestPieceKg) { heaviestPieceKg = pieceKg; heaviest = row; }
     const prefix = (row.type?.match(/^[A-Za-z]+/)||['?'])[0].toUpperCase();
     const group =
       (prefix === 'UB' || prefix === 'UC') ? 'UB/UC Beams' :
@@ -15747,10 +15783,10 @@ function buildWizSummary(q) {
   const breakdownEl = document.getElementById('wiz-breakdown');
   const heaviestHtml = heaviest
     ? `<div style="background:var(--card);border:1px solid rgba(255,107,0,0.2);border-radius:6px;padding:8px 10px">
-        <div style="font-size:10px;color:var(--muted);font-weight:600;margin-bottom:4px">HEAVIEST SECTION</div>
+        <div style="font-size:10px;color:var(--muted);font-weight:600;margin-bottom:4px">HEAVIEST SINGLE MEMBER</div>
         <div style="font-size:13px;font-weight:600;font-family:var(--font-mono);color:var(--accent)">${escHtml(heaviest.type)}</div>
-        <div style="font-size:11px;color:var(--muted);margin-top:2px">${heaviest.kgm||'?'} kg/m · ${heaviest.qty||1} No. · ${((heaviest.length||0)/1000).toFixed(2)}m</div>
-        <div style="font-size:11px;color:var(--muted)">${heaviestKg.toFixed(1)} kg total</div>
+        <div style="font-size:11px;color:var(--muted);margin-top:2px">${heaviest.kgm||'?'} kg/m · ${((heaviest.length||0)/1000).toFixed(2)}m · <b style="color:var(--text)">${heaviestPieceKg.toFixed(1)} kg each</b></div>
+        <div style="font-size:11px;color:var(--muted)">${heaviest.qty||1} No. — critical lift weight for crane sizing</div>
       </div>` : '';
 
   const profileHtml = `<div style="background:var(--card);border:1px solid var(--border);border-radius:6px;padding:8px 10px">
@@ -15863,12 +15899,12 @@ function wizUpdatePrelimsBadge() {
 
 function wizUpdateDesignPreview() {
   const q = _wizQuote; if (!q || !q.takeoff?.length) return;
-  const { draughtHrs, structEngHrs, fabpackHrs, memberCount } = autoDesignHours(q.takeoff);
+  const { draughtHrs, structEngHrs, memberCount } = autoDesignHours(q.takeoff);
   const el = document.getElementById('wiz-design-hours-preview');
   if (el) el.innerHTML = `
     <span style="font-weight:600;color:var(--text)">Suggested hours (${memberCount} members · ${(window._wizTonnes||0).toFixed(2)}t):</span>
-    Draughtsman <b>${draughtHrs}h</b> · Struct Eng <b>${structEngHrs}h</b> · Fab Pack <b>${fabpackHrs}h</b>
-    <span style="color:var(--muted);font-size:10px"> — based on your actual quotes</span>`;
+    Draughtsman <b>${draughtHrs}h</b> · Struct Eng <b>${structEngHrs}h</b>
+    <span style="color:var(--muted);font-size:10px"> — detailing hours cover the approval drawings &amp; fab pack</span>`;
 }
 
 // ── Tile interaction ──────────────────────────────────────────
@@ -15977,8 +16013,15 @@ function wizSelectDesign(el) {
   if (needsDrawings) dwizCalc(complex);
 }
 
-const WIZ_DELIVERY_RATES  = { transit:250, hiab_drop:1000, rigid:700, artic:1100, multi_drop:900 };
+const WIZ_DELIVERY_RATES  = { transit:250, hiab_drop:1000, rigid:700, artic:1100, multi_drop:900 }; // fallbacks only
 const WIZ_DELIVERY_LABELS = { transit:'Transit Van', hiab_drop:'HIAB Drop', rigid:'Rigid Lorry', artic:'Articulated Lorry', multi_drop:'Multi-drop Delivery' };
+// Live £/load for a wizard delivery tile — Global Rates first (tile key
+// hiab_drop maps to rates key hiab), hardcoded constant only as fallback.
+function wizDeliveryRate(ty) {
+  const key = ty === 'hiab_drop' ? 'hiab' : ty;
+  const def = (rates.delivery || {})[key];
+  return (def && isFinite(def.rate)) ? def.rate : (WIZ_DELIVERY_RATES[ty] || 800);
+}
 
 function wizSelectDelivery(el) {
   // Vehicle tiles are MULTI-SELECT (a job often mixes e.g. artic + transit van,
@@ -16027,7 +16070,7 @@ function wizRenderDeliveryManualRows() {
       <input type="number" class="wiz-del-loads" value="${prev[ty]?.loads ?? 1}" min="1"
         style="background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:5px 8px;color:var(--text);font-size:13px;font-family:var(--font-mono);width:60px">
       <label style="font-size:11px;color:var(--muted)">£/load</label>
-      <input type="number" class="wiz-del-rate" value="${prev[ty]?.rate ?? (WIZ_DELIVERY_RATES[ty]||800)}" min="0"
+      <input type="number" class="wiz-del-rate" value="${prev[ty]?.rate ?? wizDeliveryRate(ty)}" min="0"
         style="background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:5px 8px;color:var(--text);font-size:13px;font-family:var(--font-mono);width:85px">
     </div>`).join('');
 }
@@ -16344,10 +16387,13 @@ function applyWizard() {
   const surveyVisits = parseFloat(document.getElementById('wiz-survey-visits').value) || 1;
   q.surveyVisitRows = [];
   if (surveyChoice !== 'no') {
+    // Rates come from Global Rates (rates.survey) — not fixed figures —
+    // so editing the survey rate in Global Rates flows into the wizard.
+    const _sv = k => (rates.survey || {})[k];
     const peopleMap = {
-      mateusz:    { label: 'Mateusz Braczyk',     rate: 250 },
-      leszek:     { label: 'Leszek Spychalski', rate: 250 },
-      struct_eng: { label: 'Structural Engineer', rate: 350 },
+      mateusz:    _sv('mateusz')    || { label: 'Mateusz Braczyk',     rate: 250 },
+      leszek:     _sv('leszek')     || { label: 'Leszek Spychalski',   rate: 250 },
+      struct_eng: _sv('struct_eng') || { label: 'Structural Engineer', rate: 350 },
       both:       null
     };
     if (surveyChoice === 'both') {
@@ -16366,17 +16412,22 @@ function applyWizard() {
   // Use dwiz midpoint for draughtsman hours (calibrated formula)
   const _dwizRoot = document.getElementById('wiz-design-complexity');
   const dwizMid = parseInt(_dwizRoot?.dataset.mid || '0') || dwizCalcMid(_dwizRoot);
-  const { structEngHrs, fabpackHrs } = autoDesignHours(q.takeoff); // still use for struct eng + fabpack
+  // structEng still comes from the calibrated per-member formula; the
+  // Approval & Fab Pack bucket is NEVER auto-filled by the wizard — the
+  // detailing complexity midpoint (dwizMid) already covers producing the
+  // approval drawings and the fabrication pack, so a separate fabpack
+  // allowance on top was double-counting (Mateusz, 2026-08-08).
+  const { structEngHrs } = autoDesignHours(q.takeoff);
   if (designChoice === 'none') {
     q.designHours = 0; q.structEngHrs = 0; q.fabpackHours = 0;
   } else if (designChoice === 'client_design') {
-    q.designHours = dwizMid; q.structEngHrs = 0; q.fabpackHours = fabpackHrs;
+    q.designHours = dwizMid; q.structEngHrs = 0; q.fabpackHours = 0;
   } else if (designChoice === 'design_check') {
     q.designHours = Math.round(dwizMid * 0.3); q.structEngHrs = Math.round(structEngHrs * 0.5); q.fabpackHours = 0;
   } else if (designChoice === 'fab_pack_only') {
-    q.designHours = dwizMid; q.structEngHrs = 0; q.fabpackHours = fabpackHrs;
+    q.designHours = dwizMid; q.structEngHrs = 0; q.fabpackHours = 0;
   } else { // full_design
-    q.designHours = dwizMid; q.structEngHrs = structEngHrs; q.fabpackHours = fabpackHrs;
+    q.designHours = dwizMid; q.structEngHrs = structEngHrs; q.fabpackHours = 0;
   }
 
   // ── Fab hours ─────────────────────────────────────────────
@@ -16415,7 +16466,7 @@ function applyWizard() {
       const rowEl = document.querySelector(`#wiz-delivery-manual-rows [data-deltype="${ty}"]`);
       const loads = parseFloat(rowEl?.querySelector('.wiz-del-loads')?.value) || 1;
       const rate  = parseFloat(rowEl?.querySelector('.wiz-del-rate')?.value) ?? 0;
-      const rateV = isFinite(rate) ? rate : (WIZ_DELIVERY_RATES[ty] || 800);
+      const rateV = isFinite(rate) ? rate : wizDeliveryRate(ty);
       for (let i=0; i<loads; i++) {
         q.deliveryRows.push({ id: 'del_'+ty+'_'+(Date.now()+q.deliveryRows.length), type: ty, label: WIZ_DELIVERY_LABELS[ty]||'Delivery', qty: 1, rate: rateV });
       }
@@ -16464,15 +16515,17 @@ function autoEstimateInstallDays(takeoff) {
 }
 
 function autoEstimateDelivery(q, totalTonnes) {
+  // £/load from Global Rates (rates.delivery), hardcoded fallbacks only.
+  const dr = (k, fb) => ((rates.delivery || {})[k]?.rate ?? fb);
   q.deliveryRows = [];
   if (totalTonnes <= 1.5) {
-    q.deliveryRows.push({ id: 'del_auto_'+Date.now(), type: 'transit', label: 'Transit Van', qty: 1, rate: 250 });
+    q.deliveryRows.push({ id: 'del_auto_'+Date.now(), type: 'transit', label: 'Transit Van', qty: 1, rate: dr('transit', 250) });
   } else if (totalTonnes <= 7) {
-    q.deliveryRows.push({ id: 'del_auto_'+Date.now(), type: 'hiab', label: 'HIAB', qty: 1, rate: 1400 });
+    q.deliveryRows.push({ id: 'del_auto_'+Date.now(), type: 'hiab', label: 'HIAB', qty: 1, rate: dr('hiab', 1400) });
   } else {
     const runs = Math.ceil(totalTonnes / 10);
     for (let i = 0; i < runs; i++) {
-      q.deliveryRows.push({ id: 'del_auto_'+(Date.now()+i), type: 'artic', label: 'Articulated Lorry', qty: 1, rate: 1800 });
+      q.deliveryRows.push({ id: 'del_auto_'+(Date.now()+i), type: 'artic', label: 'Articulated Lorry', qty: 1, rate: dr('artic', 1800) });
     }
   }
 }
@@ -22280,7 +22333,7 @@ const HELP_CONTENT = {
         <ul class="h-steps">
           <li><span class="h-step-num">1</span><div><strong>Installation</strong> — erector days × rate × headcount. Click N/A if supply-only.</div></li>
           <li><span class="h-step-num">2</span><div><strong>Fabrication</strong> — workshop hours × £/hr. Click ⚡ From takeoff to auto-suggest based on tonnage and profile complexity.</div></li>
-          <li><span class="h-step-num">3</span><div><strong>Design</strong> — Draughtsman, Struct Eng, Approval & Fab Pack separately. Enter hours and rate per discipline.</div></li>
+          <li><span class="h-step-num">3</span><div><strong>Design</strong> — Draughtsman, Struct Eng, Approval & Fab Pack separately. Enter hours and rate per discipline. Note: the ⚡ Wizard fills only Draughtsman (detailing midpoint — this covers producing the approval drawings &amp; fab pack) and Struct Eng; the Approval &amp; Fab Pack bucket stays at 0 unless you set it manually here.</div></li>
           <li><span class="h-step-num">4</span><div><strong>Galvanising</strong> — qty auto-fills from tagged takeoff rows. Check the rate matches your current subcontractor quote.</div></li>
           <li><span class="h-step-num">5</span><div><strong>Margin</strong> — use the slider at the bottom right. Grand total updates in real time.</div></li>
         </ul>
