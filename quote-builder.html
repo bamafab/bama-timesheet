@@ -11929,6 +11929,11 @@ function subareaHeaderHTML(sub, count, kg, cost) {
         ondrop="onSubareaDrop(event,'${sub.areaId}','${sub.id}')"
         data-subarea-id="${sub.id}">
         <span class="subarea-header-chevron">▾</span>
+        <input type="checkbox" class="subarea-select-cb" data-subarea="${escHtml(sub.id)}"
+          onclick="event.stopPropagation()"
+          onchange="toggleSubareaSelect('${sub.id}', this.checked)"
+          title="Select every row in this sub-area"
+          style="cursor:pointer;accent-color:var(--accent);margin:0 2px;width:13px;height:13px;padding:0;flex:0 0 auto">
         <input class="subarea-name-input" value="${escHtml(sub.name)}"
           onclick="event.stopPropagation()"
           onchange="renameSubarea('${sub.id}',this.value)"
@@ -11970,7 +11975,7 @@ function takeoffRowHTML(row, i, inSub) {
       <span class="drag-handle" title="Drag to reorder">⠿</span>
     </td>
     <td style="text-align:center;padding:4px 2px">
-      <input type="checkbox" class="takeoff-cb" data-idx="${i}" data-area="${escHtml(row.area||'__unspec__')}"
+      <input type="checkbox" class="takeoff-cb" data-idx="${i}" data-area="${escHtml(row.area||'__unspec__')}" data-subarea="${escHtml(row.subarea||'')}"
         onchange="onTakeoffCheck()" onclick="onCbClick(event,${i})" style="cursor:pointer;accent-color:var(--accent)">
     </td>
     <td style="padding:3px 4px"><div class="ac-wrap" id="ac-wrap-${i}">
@@ -12476,6 +12481,12 @@ function onTakeoffCheck() {
     acb.checked = areaCbs.length > 0 && n === areaCbs.length;
     acb.indeterminate = n > 0 && n < areaCbs.length;
   });
+  document.querySelectorAll('.subarea-select-cb').forEach(scb => {
+    const subCbs = [...cbs].filter(c => c.dataset.subarea === scb.dataset.subarea);
+    const n = subCbs.filter(c => c.checked).length;
+    scb.checked = subCbs.length > 0 && n === subCbs.length;
+    scb.indeterminate = n > 0 && n < subCbs.length;
+  });
 }
 
 // One-click select of every row in one area (header checkbox). Selection is
@@ -12508,6 +12519,34 @@ function toggleAreaSelect(areaId, checked) {
   const dataKey = key || '__unspec__';
   document.querySelectorAll('.takeoff-cb').forEach(cb => {
     if (cb.dataset.area === dataKey) cb.checked = checked;
+  });
+  onTakeoffCheck();
+}
+
+// One-click select of every row in one sub-area (its header checkbox).
+// Expands the parent area and the sub-area first if either is collapsed —
+// collapsed rows render no checkboxes — preserving selections made elsewhere.
+function toggleSubareaSelect(subId, checked) {
+  const q = getQuote(); if (!q) return;
+  const sub = (q.subareas||[]).find(s => s.id === subId);
+  if (!sub) return;
+  if (checked) {
+    let expanded = false;
+    const parent = (q.areas||[]).find(a => a.id === sub.areaId);
+    if (parent && parent.collapsed) { parent.collapsed = false; expanded = true; }
+    if (!sub.areaId && q._unspecCollapsed) { q._unspecCollapsed = false; expanded = true; }
+    if (sub.collapsed) { sub.collapsed = false; expanded = true; }
+    if (expanded) {
+      const prev = new Set([...document.querySelectorAll('.takeoff-cb:checked')].map(cb => cb.dataset.idx));
+      saveAll(); renderTakeoff();
+      prev.forEach(idx => {
+        const cb = document.querySelector('.takeoff-cb[data-idx="' + idx + '"]');
+        if (cb) cb.checked = true;
+      });
+    }
+  }
+  document.querySelectorAll('.takeoff-cb').forEach(cb => {
+    if (cb.dataset.subarea === subId) cb.checked = checked;
   });
   onTakeoffCheck();
 }
@@ -22134,7 +22173,7 @@ const HELP_CONTENT = {
           <li><span class="h-step-num">3</span><div>Set material rate (£/kg) — defaults to global steel price.</div></li>
           <li><span class="h-step-num">4</span><div>Set <strong>Finish</strong>: Galvanised, Primer, Powder Coat, or None — feeds galvanising tonnage in Calcs automatically.</div></li>
           <li><span class="h-step-num">5</span><div>Use <strong>Areas</strong> to group members by location (Ground Floor, Mezzanine, Roof).</div></li>
-          <li><span class="h-step-num">5b</span><div><strong>Selecting rows:</strong> tick individual row checkboxes, use the checkbox on any <strong>area header</strong> (including Unspecified) to select that whole area in one click, or the master checkbox in the table header to select everything. Selecting a collapsed area expands it first so nothing escapes the selection — then use the bulk bar to move, delete, or select same-type.</div></li>
+          <li><span class="h-step-num">5b</span><div><strong>Selecting rows:</strong> tick individual row checkboxes, use the checkbox on any <strong>area or sub-area header</strong> (including Unspecified) to select that whole group in one click, or the master checkbox in the table header to select everything. Selecting a collapsed area expands it first so nothing escapes the selection — then use the bulk bar to move, delete, or select same-type.</div></li>
           <li><span class="h-step-num">6</span><div><strong>PlanSwift Import is always additive</strong> — it only ever adds rows; your existing takeoff is never overwritten or merged. Pick an existing area, type a new area name, or leave it on "Use areas from file". If a second import would put identical members (same section + length) into an area that already has them, or the file's area names match existing areas, you get a warning first — so two separate takeoffs never get silently compiled into one.</div></li>
           <li><span class="h-step-num">7</span><div><strong>IFC Import (⧉) reads the whole takeoff from a model.</strong> When the job comes with an <span class="h-kbd">.ifc</span> file, drop it in and every beam, column and member is read out — section, length and quantity — grouped by floor level, in seconds. No Tekla needed. Sizes come straight from the model; weights and rates from your steel database. Review the preview, then import (additive, same as PlanSwift). Anything the database doesn't recognise is flagged ⚠ so you can fix the section after import.</div></li>
           <li><span class="h-step-num">7b</span><div><strong>Plate & bracket models work too (CATIA / SolidWorks exports).</strong> If the IFC has no beams or columns — just solid parts, like a machined bracket or plate assembly — QB switches to <em>parts mode</em>: every solid's weight is measured exactly from its own geometry (mesh volume × 7850 kg/m³) and imported as EA pieces with kg-each. Identical parts group into a quantity, plates are recognised and named PLT t × w × l, and the assembly name becomes the area. No redrawing needed — the model is the takeoff.</div></li>
