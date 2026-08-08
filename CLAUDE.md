@@ -1189,6 +1189,9 @@ Opens blank (clears previous candidate's data on open AND after save — never
 prefills from `_empDocsEmp`), files under the typed name in 03 - Employees,
 skips the `loadEmployeeDocs()` refresh unless empDocsModal is actually open.
 Per-employee flow from the Docs modal unchanged (`openStarterForm()`).
+Also a **New Starter home tile on m-qms.html** (calls `openStarterForm(true)`
+directly — modal, not a view, so no mGo change); m-qms carries CSS overrides
+forcing the modal to single-column with 16px inputs (iOS no-zoom).
 
 **D4 foundation:** data-driven QMS engine — `QmsForms` (versioned JSON
 definitions; **new sheets = SQL INSERT, no code**) + `QmsSubmissions`

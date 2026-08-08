@@ -47,6 +47,11 @@
   #qmsFormModal .btn { min-height: 40px; }
   #tbtDeliverModal input, #tbtDeliverModal select, #tbtDeliverModal textarea { font-size: 16px !important; }
   #tbtDeliverModal .btn { min-height: 40px; }
+  #starterFormModal { padding: 10px !important; }
+  #starterFormModal > div > div[style*="grid"] { grid-template-columns: 1fr !important; max-height: 72vh !important; }
+  #starterFormModal [style*="grid-column"] { grid-column: 1 !important; }
+  #starterFormModal input { min-height: 42px; font-size: 16px; }
+  #starterFormModal .btn { min-height: 42px; }
   /* The TBT deliver modal is 760px on desktop — let it fill the phone. */
   #tbtDeliverModal > div { max-width: 100% !important; }
   #signModal input { font-size: 16px !important; }
@@ -135,6 +140,11 @@
       <div class="meta"><div class="title">Snagging</div><div class="sub">Photo + keyword &rarr; AI writes the snag, per item &rarr; report</div></div>
       <div class="arr">&rsaquo;</div>
     </div>
+    <div class="qcard home-tile" onclick="openStarterForm(true)">
+      <div class="chip">&#128221;</div>
+      <div class="meta"><div class="title">New Starter</div><div class="sub">Hand the phone to a new starter to fill in their details &rarr; filed PDF</div></div>
+      <div class="arr">&rsaquo;</div>
+    </div>
     <div class="m-install" id="mInstall">
       &#128161; <strong>Install this app:</strong> <span id="mInstallText">tap your browser menu and choose "Add to Home Screen".</span>
     </div>
@@ -202,7 +212,7 @@
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js" data-jspdf-loaded="1"></script>
 <script>window.CURRENT_PAGE = 'm-qms';</script>
-<script src="shared.js?v=20260808f"></script>
+<script src="shared.js?v=20260808g"></script>
 <script src="steel-match.js?v=20260801e"></script>
 
 <script>
