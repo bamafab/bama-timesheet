@@ -101,12 +101,24 @@ management, and a standalone UK steel section reference.
   Users can still collapse a group by hand; don't ship one collapsed.
 - **Chart.js is loaded in office.html only.** Reports (with charts) have moved from
   manager to office. Don't add the CDN tag to other pages.
-- **Tender ↔ Quote financial separation.** The Tender page and Tender list must
-  NEVER show financial details (pricing, costs, margins, quote values). Those
-  belong exclusively on the Quote page (`quotes.html`), gated by `viewQuotes` /
-  `editQuotes` permissions. Staff with only `tenders` permission must not see
-  any monetary information. Always confirm with the user before adding any new
-  info display to the Tender page or Tender list.
+- **Tender ↔ Quote financial separation.** Tender-facing views must NEVER show
+  financial details (pricing, costs, margins, quote values). Money belongs in
+  quote/financial views gated by `viewQuotes` / `editQuotes` permissions; staff
+  with only `tenders` permission must not see any monetary information. The
+  legacy `tenders.html`/`quotes.html` pages were retired 2026-08-08/09 — the
+  live surface is the Tender Register in `dashboard.html` (standalone, no
+  shared.js). Always confirm with Mateusz before adding any new info display
+  to a tender-facing list.
+- **Legacy tender world fully stripped from shared.js (2026-08-09).** The
+  tenders.html/quotes.html support code (~2,600 lines: page init/PIN flows,
+  tender & quote lists/detail, tender comments/files/notify/reassign, new-quote
+  PDF wizard, quote line-item editor, client-detail page view, dead nav
+  helpers, Send Later button in the Babcock email modal) is DELETED. Kept and
+  still live: client list + quick add/edit contact flow (Office Clients tab,
+  `_ensureClientModals()`), `formatFileSize`, `openAttachQuoteModal` (project
+  tracker — the reason tenders.js API keeps read-only GET). Don't reintroduce
+  references to `tendersData`, `currentTender`, `openTenderDetail`,
+  `renderQuoteList`, `loadQuoteLineItems` etc. — they no longer exist.
 - **Bama SW PO figure is NET of project PO expenses (2026-08-09).**
   `handleAdvanceFromPaymentReceived` (shared.js) computes the Raise-PO-to-
   Bama-SW amount as pre-markup value MINUS the linked project's PO spend:
@@ -272,8 +284,6 @@ Labour Log, drawings PDFs/BOM JSON) and sending mail. All relational data lives 
 ├── office.html           — Office dashboard (staff, holidays, payroll, reports, archive, etc.)
 ├── projects.html         — Drawings & jobs (per-project draftsman/build workflow)
 ├── project-tracker.html  — Project register: live SQL projects from won quotes
-├── tenders.html          — Tender management + client database
-├── quotes.html           — Quotations: financial-sensitive view (separate from tenders)
 ├── steel-database.html   — Standalone UK steel section reference (no shared.js, no auth)
 ├── shared.js             — ~9700 LOC. Page-aware; every page except hub/steel loads it.
 ├── bama.css              — Single shared stylesheet. Dark theme, CSS variables.
@@ -1851,21 +1861,12 @@ the markup it mutates.
 
 hub.html and steel-database.html have no modals.
 
-**tenders.html**
-- `newTenderModal` — create new tender with client autocomplete
-- `editTenderModal` — edit tender details and status (tender ↔ cancelled only)
+**Client modals (lazy-injected by shared.js, used on office.html Clients tab)**
 - `newClientModal` — add a new client to the database
 - `editClientModal` — edit client details
-- `contactModal` — add/edit/delete a contact for a client (used in client detail)
-- `tenderPinModal` — PIN entry on tenders page
-- `uploadProgressModal` — file upload progress indicator
-
-**quotes.html**
-- `quotesPinModal` — PIN entry on quotes page
-- `confirmModal` — generic confirm dialog (used by `showConfirmAsync` for the
-  Won-quote conversion prompt before kicking off the project conversion)
-- (Reuses `editClientModal`, `contactModal` from shared)
-- Other quote-specific modals will be added as the financial workflow is built
+- `contactModal` — add/edit/delete a contact for a client (quick add/edit flow)
+- These were originally built for the retired tenders.html; `_ensureClientModals()`
+  injects them into <body> on first use of the Office Clients tab.
 
 **project-tracker.html**
 - `projectTrackerPinModal` — PIN entry on the project tracker page
@@ -1915,9 +1916,11 @@ none of this is built yet.
   Labour Cost tile at LabourLog data (currently shows the labour budget
   from quote line items, not actual hours logged).
 - **Quote financial workflow** — **Phase 1 done**. The 9 fixed line item
-  categories per quote (Prelims through Delivery) are now editable on the
-  Quote detail page (`quotes.html`) — see `loadQuoteLineItems()` /
-  `renderQuoteLineItems()` / `saveQuoteLineItems()` in shared.js. The
+  categories per quote (Prelims through Delivery) live in the
+  `QuoteLineItems` table (the legacy quotes.html editor and its
+  `loadQuoteLineItems()`/`saveQuoteLineItems()` shared.js code were removed
+  2026-08-09 with the rest of the legacy tender world; the table itself is
+  live — mark-won writes it, Project Tracker reads it). The
   Project Tracker (`project-tracker.html`) shows a financial dashboard:
   3 tiles (Contract Value, Labour Cost, Running Cost stub) + per-quote
   line-item tables with per-line % complete sliders. Multi-quote per
