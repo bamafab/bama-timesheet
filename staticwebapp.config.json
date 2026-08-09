@@ -3,6 +3,21 @@
     {
       "route": "/",
       "rewrite": "/hub.html"
+    },
+    {
+      "route": "/tenders.html",
+      "redirect": "/dashboard.html",
+      "statusCode": 301
+    },
+    {
+      "route": "/quotes.html",
+      "redirect": "/dashboard.html",
+      "statusCode": 301
+    },
+    {
+      "route": "/quote-import-diagnostic.html",
+      "redirect": "/dashboard.html",
+      "statusCode": 301
     }
   ],
   "globalHeaders": {
