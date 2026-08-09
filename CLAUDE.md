@@ -822,11 +822,29 @@ mark-fabricated step). Migration: `api/sql/add-staged-fabrication.sql`.
   Any checkbox INPUT inside the takeoff table must pin explicit
   width/height/`flex:0 0 auto` inline — `.data-table input { width:100% }`
   balloons it otherwise.
-- **STEEL_KGM lives in TWO copies** — quote-builder.html inline + steel-data.js
-  (loaded by projects.html; bump its `?v=` on change). 2026-08-08 fills: FLT
-  6–30mm band complete for all widths 40–500; standard EN 10210 RHS rectangles
-  added (300x150, 180x100, 260x180, 300x100, 350x250, 400x300, 450x250,
-  500x200/300 + gauge gaps). RHS masses per EN 10210-2:
+- **Steel data: two hand-edited copies + one generated file (2026-08-09).**
+  Hand-edit STEEL_KGM in BOTH quote-builder.html inline AND steel-data.js
+  (loaded by projects.html; bump its `?v=` on change) — QB carries its own
+  copy by design (no external JS). Then run
+  `node tools/build-steel-sections.js` to regenerate **steel-sections.json**
+  (stock/m-qms voice matcher — NEVER hand-edit it; `--check` flag verifies
+  freshness) and bump the json fetch `?v=` in stock.html + m-qms.html. Gate:
+  `node tests/steel-match.js`. History: the json had drifted (missing the
+  2026-08-08 gap-fills) AND carried garbage kg/m on all 377 CHS/SHS/RHS/
+  Flat/Round/Square rows (kgm = first designation number) plus nulls on all
+  260 purlins — silently corrupting stock tonnage. The generator fixed all
+  637 and makes recurrence impossible. **steel-database.html** (reference
+  page, inline DATA) is the fourth copy: when adding sections, append rows
+  there too. Its RHS + Flat Bar families were regenerated 2026-08-09 with
+  mass from STEEL_KGM + exact EN 10210 geometry (ro=1.5t, ri=1.0t spandrel
+  method — reproduces blue book RHS 200x100x8 to every printed digit).
+  ⚠ KNOWN FAULT: the page's CHS/SHS (and likely bars/alu/stainless)
+  Ix/Iy/r/W columns are still WRONG (e.g. CHS 114.3x5 page I=238 vs exact
+  257; SHS 100x100x5 page 214 vs 279) — mass/area/surface are fine. Same
+  regeneration method applies; awaiting Mateusz's go-ahead.
+  2026-08-08 fills: FLT 6–30mm band complete for widths 40–500; EN 10210
+  RHS rectangles added (300x150, 180x100, 260x180, 300x100, 350x250,
+  400x300, 450x250, 500x200/300 + gauge gaps). RHS masses per EN 10210-2:
   `M = 0.00785*(2t(B+H) − 5.0731t²)`; FLT: `w×t×7850/1e6`, 3 sig figs.
   Before assuming a "missing" section was removed, check `git log -S` — both
   300x150 reports turned out to be original seed-data gaps.

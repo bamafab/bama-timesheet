@@ -1049,7 +1049,7 @@ let _stkSections = null, _stkIdx = null, _stkReview = [], _stkList = [];
 
 async function stkEnsureSections() {
   if (_stkIdx) return;
-  try { const res = await fetch('steel-sections.json?v=20260731s'); _stkSections = await res.json(); _stkIdx = steelBuildIndex(_stkSections); }
+  try { const res = await fetch('steel-sections.json?v=20260809a'); _stkSections = await res.json(); _stkIdx = steelBuildIndex(_stkSections); }
   catch (e) { console.warn('steel sections load failed', e); _stkIdx = []; }
 }
 function stkMatch(raw) { try { return steelMatch(raw, _stkIdx || []); } catch(_) { return null; } }
