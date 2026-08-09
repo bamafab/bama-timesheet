@@ -50297,6 +50297,22 @@ function openStarterForm(standalone) {
           <button class="btn btn-ghost btn-sm" onclick="document.getElementById('starterFormModal').style.display='none'">✕</button></div>
         <div style="padding:6px 20px 16px;display:grid;grid-template-columns:1fr 1fr;gap:8px;font-size:12px;max-height:65vh;overflow-y:auto">
           ${fields}
+          <div id="sfOfficeUse" style="grid-column:1/3;display:none;margin-top:8px;border-top:1px dashed var(--border);padding-top:10px">
+            <div style="font-weight:700;font-size:12px;color:var(--accent);margin-bottom:6px">Office use — set up as employee</div>
+            <label style="display:flex;align-items:center;gap:8px;font-size:12px;margin-bottom:8px;cursor:pointer">
+              <input type="checkbox" id="sf_create_emp" checked style="width:16px;height:16px"> Create the employee record on save (PIN 0000, rate £0 — set both in Staff Management)
+            </label>
+            <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px">
+              <div><label style="color:var(--muted);display:block;margin-bottom:3px;font-size:11px">Staff type</label>
+                <select id="sf_staff_type" style="width:100%;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:6px 9px;color:var(--text);box-sizing:border-box">
+                  <option value="workshop">Workshop</option><option value="office">Office</option></select></div>
+              <div><label style="color:var(--muted);display:block;margin-bottom:3px;font-size:11px">Pay type</label>
+                <select id="sf_pay_type" style="width:100%;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:6px 9px;color:var(--text);box-sizing:border-box">
+                  <option value="payee">PAYEE</option><option value="cis">CIS</option></select></div>
+              <div><label style="color:var(--muted);display:block;margin-bottom:3px;font-size:11px">Start date</label>
+                <input id="sf_start_date" type="date" style="width:100%;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:6px 9px;color:var(--text);box-sizing:border-box"></div>
+            </div>
+          </div>
           <div id="sfStatus" style="grid-column:1/3;color:var(--muted);min-height:15px"></div>
         </div>
         <div style="padding:12px 20px;border-top:1px solid var(--border);display:flex;gap:10px;justify-content:flex-end;align-items:center">
@@ -50312,10 +50328,14 @@ function openStarterForm(standalone) {
       const el = document.getElementById('sf_' + k); if (el) el.value = '';
     }
     const st = document.getElementById('sfStatus'); if (st) st.textContent = '';
+    const sd = document.getElementById('sf_start_date'); if (sd) sd.value = '';
+    const ce = document.getElementById('sf_create_emp'); if (ce) ce.checked = true;
   } else {
     const nameEl = document.getElementById('sf_full_name');
     if (nameEl && !nameEl.value) nameEl.value = _empDocsEmp || '';
   }
+  const ou = document.getElementById('sfOfficeUse');
+  if (ou) ou.style.display = _starterStandalone ? 'block' : 'none';
   document.getElementById('starterFormModal').style.display = 'flex';
 }
 
@@ -50352,7 +50372,7 @@ async function saveStarterForm() {
     const blob = doc.output('blob');
     status.textContent = 'Filing…';
     const empName = _starterStandalone ? v('full_name') : (_empDocsEmp || v('full_name'));
-    const fileName = `New Employee Sheet - ${empName} - ${new Date().toISOString().slice(0, 10)}.pdf`;
+    const fileName = `NSF - ${empName} - ${new Date().toISOString().slice(0, 10)}.pdf`;
     const folder = await employeeDocsFolder(empName);
     const up = await uploadFileToFolder(folder.id, fileName, await blob.arrayBuffer(), 'application/pdf', BAMA_DRIVE_ID);
     await api.post('/api/employee-documents', {
@@ -50361,6 +50381,30 @@ async function saveStarterForm() {
       expiry_date: v('rtw_expiry') || null,   // RTW expiry drives the reminder
       notes: [v('ni_number') && 'NI ' + v('ni_number'), v('rtw_type') && ('RTW: ' + v('rtw_type') + ' ' + v('rtw_number'))].filter(Boolean).join(' · ') || null,
       file_name: fileName, sharepoint_file_id: up.id, drive_id: BAMA_DRIVE_ID, web_url: up.webUrl || null });
+    if (_starterStandalone && document.getElementById('sf_create_emp')?.checked) {
+      status.textContent = 'Creating employee record…';
+      try {
+        const existing = await api.get('/api/employees?all=true');
+        if ((existing || []).some(e => (e.name || '').toLowerCase() === empName.toLowerCase())) {
+          toast(`${empName} is already in Staff Management — sheet filed against them`, 'info');
+        } else {
+          const staffType = document.getElementById('sf_staff_type')?.value || 'workshop';
+          await api.post('/api/employees', {
+            name: empName, pin: '0000', rate: 0,
+            staff_type: staffType,
+            erp_role: staffType === 'office' ? 'office_admin' : 'workshop',
+            holiday_entitlement: 20,
+            start_date: document.getElementById('sf_start_date')?.value || null,
+            pay_type: document.getElementById('sf_pay_type')?.value || 'payee',
+            carryover_days: 0
+          });
+          toast(`${empName} added to Staff Management (${staffType}) — set their rate & PIN there`, 'success');
+          if (typeof state !== 'undefined' && state.timesheetData) {
+            try { const all = await api.get('/api/employees'); state.timesheetData.employees = (all || []).map(normaliseEmployee); buildEmployeeMaps(); if (typeof renderStaffList === 'function') renderStaffList(); } catch (_) {}
+          }
+        }
+      } catch (e2) { toast('Employee record not created: ' + e2.message, 'error'); }
+    }
     window.open(URL.createObjectURL(blob), '_blank');
     toast('Starter sheet saved & filed — print for a wet signature if needed', 'success');
     document.getElementById('starterFormModal').style.display = 'none';

@@ -1192,6 +1192,13 @@ Per-employee flow from the Docs modal unchanged (`openStarterForm()`).
 Also a **New Starter home tile on m-qms.html** (calls `openStarterForm(true)`
 directly — modal, not a view, so no mGo change); m-qms carries CSS overrides
 forcing the modal to single-column with 16px inputs (iOS no-zoom).
+**Employee auto-create (2026-08-09):** standalone save files as
+`NSF - <Name> - <date>.pdf` and, via an "Office use" block (standalone only:
+create-record checkbox default ON, staff type, pay type, start date), POSTs
+/api/employees (pin '0000', rate 0, erp_role workshop/office_admin from staff
+type) after a client-side dedupe check against /api/employees?all=true —
+no server-side dedupe exists on that POST. Refreshes office Staff list if
+state is loaded; non-fatal if the record create fails (PDF already filed).
 
 **D4 foundation:** data-driven QMS engine — `QmsForms` (versioned JSON
 definitions; **new sheets = SQL INSERT, no code**) + `QmsSubmissions`
