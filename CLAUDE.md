@@ -107,6 +107,16 @@ management, and a standalone UK steel section reference.
   `editQuotes` permissions. Staff with only `tenders` permission must not see
   any monetary information. Always confirm with the user before adding any new
   info display to the Tender page or Tender list.
+- **Bama SW PO figure is NET of project PO expenses (2026-08-09).**
+  `handleAdvanceFromPaymentReceived` (shared.js) computes the Raise-PO-to-
+  Bama-SW amount as pre-markup value MINUS the linked project's PO spend:
+  every non-Cancelled PO on `linked_project_id`, netted of VAT via `_poNet`
+  and summed with `sumMoney` — the same definition as Project Tracker's
+  Running Cost tile, so the figures agree across modules. The Bama SW PO
+  itself is never a PurchaseOrders row (PDF + babcock-quotes fields only),
+  so it can't self-deduct. Non-fatal: if the PO fetch fails, the undeducted
+  figure is shown with a warning toast + note in the modal
+  (`#bptbsBreakdown` in babcock.html shows the deduction breakdown).
 - **Babcock payment cascade (2026-08-08).** Marking money movements in
   the invoicing ledgers now mirrors onto the Babcock tracker via
   `api/src/babcock-cascade.js` (`advanceBabcockOnPayment`):

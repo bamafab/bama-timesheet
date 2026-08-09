@@ -34522,8 +34522,28 @@ function closeBabcockPoToBamaSwModal() {
 async function handleAdvanceFromPaymentReceived(q, next) {
   const total     = Number(q.total_value || 0);
   const markupPct = Number(q.markup_pct  || 0);
-  const original  = markupPct > 0 ? total / (1 + markupPct / 100) : total;
-  const netTotal  = Math.max(0, original); // TODO: subtract PO expenses when module exists
+  const original  = _r2(markupPct > 0 ? total / (1 + markupPct / 100) : total);
+
+  // Subtract the project's PO expenses (materials etc. bought by BAMA) so the
+  // Bama SW figure is the pre-markup value NET of what we already spent.
+  // Same definition as Project Tracker's Running Cost: every non-Cancelled PO
+  // on the linked project, netted of VAT via _poNet. The Bama SW PO itself is
+  // never a PurchaseOrders row (PDF + babcock-quotes fields only), so there is
+  // no self-double-count. Non-fatal: if the fetch fails we fall back to the
+  // undeducted figure and say so — the user confirms the amount in the modal.
+  let poExpenses = 0, poCount = 0, poFetchFailed = false;
+  if (q.linked_project_id) {
+    try {
+      const pos    = await api.get(`/api/purchase-orders?project_id=${q.linked_project_id}`);
+      const active = (pos || []).filter(p => p.status !== 'Cancelled');
+      poExpenses   = sumMoney(active, _poNet);
+      poCount      = active.length;
+    } catch (e) {
+      poFetchFailed = true;
+      console.warn('Could not load project POs for Bama SW deduction:', e);
+    }
+  }
+  const netTotal = Math.max(0, _r2(original - poExpenses));
 
   let projectNumber = '';
   try {
@@ -34536,7 +34556,18 @@ async function handleAdvanceFromPaymentReceived(q, next) {
   _bpoToBswContext = { quote: q, next, netTotal, projectNumber };
 
   document.getElementById('bptbsProjectRef').textContent = projectNumber || q.quote_ref || '';
-  document.getElementById('bptbsAmount').textContent     = fmtCurrency(netTotal);
+  const amountEl = document.getElementById('bptbsAmount');
+  amountEl.textContent = fmtCurrency(netTotal);
+  amountEl.title = poCount
+    ? `Pre-markup ${fmtCurrency(original)} − ${poCount} project PO${poCount !== 1 ? 's' : ''} (nett) ${fmtCurrency(poExpenses)}`
+    : `Pre-markup value ${fmtCurrency(original)} — no project PO expenses to deduct`;
+  const breakdownEl = document.getElementById('bptbsBreakdown');
+  if (breakdownEl) {
+    breakdownEl.textContent = poCount
+      ? `Pre-markup ${fmtCurrency(original)} − ${poCount} PO${poCount !== 1 ? 's' : ''} nett ${fmtCurrency(poExpenses)}`
+      : (poFetchFailed ? '⚠ Could not load project POs — no expense deduction applied' : '');
+  }
+  if (poFetchFailed) toast('Could not load project POs — amount shown WITHOUT expense deduction', 'warning');
   document.getElementById('bptbsPoNumber').value         = q.bama_sw_po_number || '';
   const due = new Date(); due.setDate(due.getDate() + 30);
   document.getElementById('bptbsDueDate').value          = due.toISOString().split('T')[0];
