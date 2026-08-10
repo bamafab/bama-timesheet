@@ -11980,12 +11980,13 @@ window.bamaRelinkDrawingJob = async function bamaRelinkDrawingJob(projectNumber)
     }
 
     // 2 — per-file rows (approval revision files + parts/site element files)
+    const unmatched = [];   // verified after the loop — see below
     const collect = (arr, table) => {
       for (const f of (arr || [])) {
         const key = String(f.fileName || f.file_name || '').toLowerCase();
         if (!key) continue;
         const item = fileMap.get(key);
-        if (!item) { report.push(`  ${table} #${f.id} "${key}": no matching file on SharePoint — re-upload`); continue; }
+        if (!item) { unmatched.push({ table, f, key }); continue; }
         const storedId  = f.fileId || f.sharepoint_file_id;
         const storedUrl = f.webUrl || f.web_url || f.sharepoint_web_url || null;
         // Rewrite when EITHER the id or the stored web_url is stale. Clicks
@@ -12021,6 +12022,29 @@ window.bamaRelinkDrawingJob = async function bamaRelinkDrawingJob(projectNumber)
       const asms = await api.get('/api/job-assemblies?job_id=' + j.id);
       collect((Array.isArray(asms) ? asms : []).filter(a => a.file_name), 'assembly');
     } catch (e) { /* job may have no assemblies — fine */ }
+
+    // Not every stored file lives under 02 - Drawings (some are filed
+    // elsewhere in the project tree and were never moved). Before telling
+    // the user to re-upload, verify the STORED link: if the stored id still
+    // resolves, the link is fine and the row is left untouched.
+    for (const u of unmatched) {
+      const storedId = u.f.fileId || u.f.sharepoint_file_id;
+      const storedDrive = u.f.driveId || u.f.sharepoint_drive_id || BAMA_DRIVE_ID;
+      let ok = false;
+      if (storedId) {
+        try {
+          const r = await fetch(
+            `https://graph.microsoft.com/v1.0/drives/${storedDrive}/items/${storedId}?$select=id,webUrl`,
+            { headers: { 'Authorization': `Bearer ${token}` } });
+          ok = r.ok;
+        } catch (e) { /* treat as dead */ }
+      }
+      if (ok) {
+        report.push(`  ${u.table} #${u.f.id} "${u.key}": link valid (file lives outside 02 - Drawings — left untouched)`);
+      } else {
+        report.push(`  ${u.table} #${u.f.id} "${u.key}": link DEAD and no matching file under 02 - Drawings — re-upload`);
+      }
+    }
   }
 
   if (updates.length) {
