@@ -11809,8 +11809,14 @@ async function findProjectFolder(projectId) {
       const searchData = await searchRes.json();
       const folders = (searchData.value || []).filter(i => i.folder);
       const matches = _spProjNameMatches(projectId);
-      found = folders.find(i => matches(i.name))
-           || folders.find(i => i.name.includes(projectId));
+      // Exact number-prefix matches ONLY — no loose .includes() fallback.
+      // .includes() is how project C260740's drawing job got filed inside
+      // "BC0089 - Babcock - C2607406" (C2607406 contains C260740 as a
+      // substring). Legacy folder names always start with the project
+      // number, so prefix matching loses nothing; if genuinely not found,
+      // returning null is correct — createJob auto-creates and other
+      // callers surface their own "not found" handling.
+      found = folders.find(i => matches(i.name)) || null;
     } catch (e) {
       console.warn('Drive-wide folder search failed:', e.message);
     }
