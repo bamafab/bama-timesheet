@@ -11874,6 +11874,154 @@ async function ensureProjectFolder(projectId) {
   return folder;
 }
 
+// Verify a job's stored SharePoint folder id still resolves; if it 404s
+// (classic cause: someone moved folders in Explorer / OneDrive sync, which
+// SharePoint executes as copy+delete, minting new item ids — unlike the web
+// UI "Move to" which preserves ids), re-resolve the job folder by name under
+// the project's 02 - Drawings and persist the new id. Called by every upload
+// path so a folder move self-heals on the next upload instead of 404ing.
+async function ensureJobFolderAlive(job, projectId) {
+  const token = await getToken();
+  const driveId = job.spDriveId || BAMA_DRIVE_ID;
+  if (job.spFolderId) {
+    try {
+      const res = await fetch(
+        `https://graph.microsoft.com/v1.0/drives/${driveId}/items/${job.spFolderId}?$select=id`,
+        { headers: { 'Authorization': `Bearer ${token}` } }
+      );
+      if (res.ok) return job.spFolderId;
+    } catch (e) { /* network blip — fall through to re-resolve */ }
+  }
+  const projId = projectId || (typeof currentProject !== 'undefined' && currentProject ? currentProject.id : null);
+  if (!projId) throw new Error('Job folder id is stale and no project context to re-resolve from');
+  const projFolder = await findProjectFolder(projId);
+  if (!projFolder) throw new Error('Job folder id is stale and the project folder could not be resolved');
+  const drw = await getOrCreateSubfolder(projFolder.id, '02 - Drawings');
+  const kids = (await _spListChildren(drw.id, token)).filter(k => k.folder);
+  const wantedFolder = String(job.folderName || '').toLowerCase();
+  const wantedName = String(job.name || job.job_name || '').toLowerCase();
+  const hit = kids.find(k => wantedFolder && k.name.toLowerCase() === wantedFolder)
+           || kids.find(k => wantedName && k.name.toLowerCase().endsWith('- ' + wantedName))
+           || kids.find(k => wantedName && k.name.toLowerCase().includes(wantedName));
+  if (!hit) throw new Error(`Job folder "${job.folderName || job.name}" not found under 02 - Drawings — run bamaRelinkDrawingJob('${projId}') in the console`);
+  job.spFolderId = hit.id;
+  job.spDriveId = hit.parentReference?.driveId || driveId;
+  try { await api.put(`/api/drawings/${parseInt(job.id)}`, { sharepoint_folder_id: hit.id }); }
+  catch (e) { console.warn('Could not persist re-resolved job folder id (non-fatal):', e.message); }
+  console.warn(`Job folder id was stale — self-healed to "${hit.name}" (${hit.id})`);
+  return hit.id;
+}
+
+// Full repair after an Explorer/OneDrive folder move broke stored ids for a
+// project's drawing jobs. Run from the browser console on the Projects page:
+//   bamaRelinkDrawingJob('C260740')
+// Re-resolves every job folder under <project>/02 - Drawings, then walks the
+// whole subtree building a filename → new-item map and rewrites
+// DrawingRevisionFiles / DrawingElementFiles / JobBomItems rows whose stored
+// sharepoint_file_id no longer matches, via POST /api/drawings-relink-files.
+// Matching is by exact file name; anything unmatched is reported for manual
+// re-upload.
+window.bamaRelinkDrawingJob = async function bamaRelinkDrawingJob(projectNumber) {
+  const projId = String(projectNumber || '').trim();
+  if (!projId) { console.error('Usage: bamaRelinkDrawingJob("C260740")'); return; }
+  const token = await getToken();
+  const report = [];
+  const projFolder = await findProjectFolder(projId);
+  if (!projFolder) { console.error('Project folder not found for', projId); return; }
+  report.push(`Project folder: ${projFolder.name} (${projFolder.id})`);
+  const drw = await getOrCreateSubfolder(projFolder.id, '02 - Drawings');
+
+  // Walk the whole 02 - Drawings subtree: file name (lowercase) → drive item
+  const fileMap = new Map();
+  const dupes = new Set();
+  const walk = async (folderId) => {
+    const kids = await _spListChildren(folderId, token);
+    for (const k of kids) {
+      if (k.folder) { await walk(k.id); }
+      else {
+        const key = String(k.name).toLowerCase();
+        if (fileMap.has(key)) dupes.add(key);
+        fileMap.set(key, k);
+      }
+    }
+  };
+  await walk(drw.id);
+  report.push(`${fileMap.size} file(s) indexed under 02 - Drawings` + (dupes.size ? ` (${dupes.size} duplicate name(s): ${[...dupes].join(', ')})` : ''));
+
+  const topFolders = (await _spListChildren(drw.id, token)).filter(k => k.folder);
+  const jobs = await api.get('/api/drawings?project_number=' + encodeURIComponent(projId));
+  const updates = [];
+
+  for (const j of jobs) {
+    // 1 — job folder id
+    let alive = false;
+    if (j.sharepoint_folder_id) {
+      try {
+        const r = await fetch(
+          `https://graph.microsoft.com/v1.0/drives/${BAMA_DRIVE_ID}/items/${j.sharepoint_folder_id}?$select=id`,
+          { headers: { 'Authorization': `Bearer ${token}` } });
+        alive = r.ok;
+      } catch (e) { /* treat as dead */ }
+    }
+    if (alive) {
+      report.push(`Job ${j.id} "${j.job_name}": folder OK`);
+    } else {
+      const jn = String(j.job_name || '').toLowerCase();
+      const hit = topFolders.find(f => f.name.toLowerCase().endsWith('- ' + jn))
+               || topFolders.find(f => f.name.toLowerCase() === jn)
+               || topFolders.find(f => f.name.toLowerCase().includes(jn));
+      if (hit) {
+        await api.put('/api/drawings/' + j.id, { sharepoint_folder_id: hit.id });
+        report.push(`Job ${j.id} "${j.job_name}": folder RELINKED → "${hit.name}"`);
+      } else {
+        report.push(`Job ${j.id} "${j.job_name}": folder NOT FOUND under 02 - Drawings — fix manually`);
+        continue;
+      }
+    }
+
+    // 2 — per-file rows (approval revision files + parts/site element files)
+    const collect = (arr, table) => {
+      for (const f of (arr || [])) {
+        const key = String(f.fileName || f.file_name || '').toLowerCase();
+        if (!key) continue;
+        const item = fileMap.get(key);
+        if (!item) { report.push(`  ${table} #${f.id} "${key}": no matching file on SharePoint — re-upload`); continue; }
+        const storedId = f.fileId || f.sharepoint_file_id;
+        if (item.id !== storedId) {
+          updates.push({
+            table, id: f.id,
+            sharepoint_file_id: item.id,
+            sharepoint_drive_id: item.parentReference?.driveId || BAMA_DRIVE_ID,
+            web_url: item.webUrl || null
+          });
+        }
+      }
+    };
+    try {
+      const det = await api.get('/api/drawing-elements/' + j.id);
+      for (const rev of (det.revisions || [])) collect(rev.files, 'revision');
+      const byCtx = det.files || {};
+      for (const ctx of Object.keys(byCtx)) collect(byCtx[ctx], 'element');
+    } catch (e) { report.push(`  Job ${j.id}: could not load element data (${e.message})`); }
+
+    // 3 — BOM item part drawings
+    try {
+      const bom = await api.get('/api/job-bom-items?job_id=' + j.id);
+      collect((Array.isArray(bom) ? bom : []).filter(b => b.file_name), 'bom');
+    } catch (e) { /* job may have no BOM — fine */ }
+  }
+
+  if (updates.length) {
+    const res = await api.post('/api/drawings-relink-files', { updates });
+    report.push(`${res.applied}/${updates.length} file link(s) rewritten`);
+  } else {
+    report.push('No file links needed rewriting');
+  }
+  console.log(report.join('\n'));
+  if (typeof toast === 'function') toast('Re-link complete — details in console', 'success');
+  return report;
+};
+
 // Creates a folder under parentItemId. Retries on transient Graph failures
 // (429 throttling, 5xx, network drops) with exponential backoff, honouring
 // Retry-After when present. SharePoint throttles rapid sequential creates and
@@ -13017,7 +13165,7 @@ async function onFixingFilesPicked(fileList) {
   const driveId = currentJob.spDriveId || BAMA_DRIVE_ID;
   let bomFolder;
   try {
-    bomFolder = await getOrCreateSubfolder(currentJob.spFolderId, ELEMENT_FOLDERS.bom, driveId);
+    bomFolder = await getOrCreateSubfolder(await ensureJobFolderAlive(currentJob), ELEMENT_FOLDERS.bom, driveId);
   } catch (e) {
     banner.remove();
     toast(`Could not access BOM folder: ${e.message}`, 'error');
@@ -19061,7 +19209,7 @@ async function confirmSitePack() {
     const fileName = baseName + '.pdf';
 
     const driveId = job.spDriveId || BAMA_DRIVE_ID;
-    const siteFolder = await getOrCreateSubfolder(job.spFolderId, ELEMENT_FOLDERS.site, driveId);
+    const siteFolder = await getOrCreateSubfolder(await ensureJobFolderAlive(job), ELEMENT_FOLDERS.site, driveId);
     const arrayBuffer = await blob.arrayBuffer();
     const uploaded = await uploadFileToFolder(siteFolder.id, fileName, arrayBuffer, 'application/pdf', driveId);
 
@@ -19263,7 +19411,7 @@ async function onBomManualFilesPicked(fileList) {
   const driveId = currentJob.spDriveId || BAMA_DRIVE_ID;
   let bomFolder;
   try {
-    bomFolder = await getOrCreateSubfolder(currentJob.spFolderId, ELEMENT_FOLDERS.bom, driveId);
+    bomFolder = await getOrCreateSubfolder(await ensureJobFolderAlive(currentJob), ELEMENT_FOLDERS.bom, driveId);
   } catch (e) {
     banner.remove();
     toast(`Could not access BOM folder: ${e.message}`, 'error');
@@ -21020,7 +21168,7 @@ async function confirmUploadFile() {
   try {
     const token = await getToken();
     // Determine the SharePoint target folder path
-    let targetFolderId = job.spFolderId;
+    let targetFolderId = await ensureJobFolderAlive(job);
     const driveId = job.spDriveId || BAMA_DRIVE_ID;
 
     document.getElementById('uploadFileProgressBar').style.width = '15%';
@@ -21463,7 +21611,7 @@ async function onAssemblyFilesPicked(fileList) {
   const driveId = currentJob.spDriveId || BAMA_DRIVE_ID;
   let asmFolder;
   try {
-    asmFolder = await getOrCreateSubfolder(currentJob.spFolderId, ELEMENT_FOLDERS.assembly, driveId);
+    asmFolder = await getOrCreateSubfolder(await ensureJobFolderAlive(currentJob), ELEMENT_FOLDERS.assembly, driveId);
   } catch (e) {
     banner.remove();
     toast(`Could not access Assembly folder: ${e.message}`, 'error');
@@ -22231,7 +22379,7 @@ async function attachPdfToAssembly(assemblyId, file) {
   toast('Uploading PDF…', 'info');
   try {
     const driveId = currentJob.spDriveId || BAMA_DRIVE_ID;
-    const asmFolder = await getOrCreateSubfolder(currentJob.spFolderId, ELEMENT_FOLDERS.assembly, driveId);
+    const asmFolder = await getOrCreateSubfolder(await ensureJobFolderAlive(currentJob), ELEMENT_FOLDERS.assembly, driveId);
     const arrayBuffer = await file.arrayBuffer();
     const uploaded = await uploadFileToFolder(asmFolder.id, file.name, arrayBuffer, file.type, driveId);
 

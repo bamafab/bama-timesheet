@@ -346,3 +346,53 @@ app.http('drawings-delete', {
         }
     }
 });
+
+// POST /api/drawings-relink-files — batch repair of SharePoint file ids after
+// a folder move that minted new item ids (Explorer/OneDrive moves execute as
+// copy+delete server-side, unlike SharePoint web UI "Move to" which keeps ids).
+// The client resolves the new ids via Graph (the API has no Graph token) and
+// posts { updates: [{ table:'revision'|'element'|'bom', id, sharepoint_file_id,
+// sharepoint_drive_id, web_url }] }. Table names are whitelisted server-side.
+app.http('drawings-relink-files', {
+    methods: ['POST'],
+    authLevel: 'anonymous',
+    route: 'drawings-relink-files',
+    handler: async (request, context) => {
+        const auth = await requireAuth(request);
+        if (auth.status) return auth;
+
+        try {
+            const body = await request.json();
+            const updates = Array.isArray(body.updates) ? body.updates : [];
+            const TABLES = {
+                revision: { table: 'DrawingRevisionFiles', urlCol: 'web_url' },
+                element:  { table: 'DrawingElementFiles',  urlCol: 'web_url' },
+                bom:      { table: 'JobBomItems',          urlCol: 'sharepoint_web_url' }
+            };
+            let applied = 0;
+            for (const u of updates) {
+                const spec = TABLES[u.table];
+                const id = parseInt(u.id);
+                if (!spec || !id || !u.sharepoint_file_id) continue;
+                await query(
+                    `UPDATE ${spec.table}
+                     SET sharepoint_file_id = @fid,
+                         sharepoint_drive_id = @did,
+                         ${spec.urlCol} = @url
+                     WHERE id = @id`,
+                    {
+                        fid: String(u.sharepoint_file_id),
+                        did: u.sharepoint_drive_id ? String(u.sharepoint_drive_id) : null,
+                        url: u.web_url ? String(u.web_url) : null,
+                        id
+                    }
+                );
+                applied++;
+            }
+            return ok({ applied, received: updates.length }, request);
+        } catch (err) {
+            context.error('Error relinking drawing files:', err);
+            return serverError('Failed to relink files', request);
+        }
+    }
+});
