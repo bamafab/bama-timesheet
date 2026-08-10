@@ -16232,6 +16232,7 @@ async function openRamsModal(existingDocId) {
     ? sr.tasks.map(t => [`${t.title}${t.detail ? ': ' + t.detail : ''}`, ...(t.steps || []).map(s => '- ' + s)].join('\n')).join('\n\n')
     : '');
   setV('ramsNotes',      sr?.notes ?? '');
+  setV('ramsWorkBrief',  sr?.workBrief ?? '');
   const rStatus = document.getElementById('ramsScopeStatus'); if (rStatus) rStatus.textContent = '';
 
   // — Jobs covered (merge picker; locked on revision, with an Edit unlock) —
@@ -16777,9 +16778,9 @@ Return ONLY a JSON object, no preamble and no Markdown fences, in exactly this s
 }
 
 RULES:
-- "scope" = plain WHAT-is-being-installed points (one clause each, NO leading numbers — the renderer numbers them). Reference the drawing where relevant.
-- "tasks" = the ordered SEQUENCE OF WORKS. "title" is a short stage title, "intro" one summary sentence, "steps" the ordered concrete actions within that stage (the renderer letters them a. b. c.). Start with mobilisation / site set-up and end with demobilisation / handover, with the real install stages (setting out, lifting & positioning, fixing, bolting-up, checking) in between.
-- Strictly UK English, concise, imperative in the task detail ("Install\u2026", "Set out\u2026", "Lift and position\u2026").
+- "scope" = plain WHAT-works-are-being-carried-out points (one clause each, NO leading numbers — the renderer numbers them). Match the nature of the works (install / remove / alter) exactly. Reference the drawing where relevant.
+- "tasks" = the ordered SEQUENCE OF WORKS. "title" is a short stage title, "intro" one summary sentence, "steps" the ordered concrete actions within that stage (the renderer letters them a. b. c.). Start with mobilisation / site set-up and end with demobilisation / handover, with the real work stages in between — installation: setting out, lifting & positioning, fixing, bolting-up, checking; removal: services/isolation checks, temporary support & stability checks, cutting & dismantling, lowering & removing sections, waste segregation, making good.
+- Strictly UK English, concise, imperative in the task detail ("Install\u2026", "Set out\u2026", "Cut\u2026", "Remove\u2026", "Lower\u2026").
 - Do NOT invent quantities or dimensions not shown on the drawing.
 - Output valid JSON only.`;
 
@@ -16833,15 +16834,17 @@ RULES:
     if (sts) { sts.style.color = '#3ecf8e'; sts.textContent = 'Scope & sequence drafted from the drawing \u2014 edit as needed.'; }
   } catch (e) {
     // Deterministic fallback so the user is never blocked. Only fill empty
-    // fields so we don't clobber anything the user already typed.
-    if (!scopeTa.value.trim()) {
+    // fields so we don't clobber anything the user already typed. The template
+    // is INSTALLATION-shaped, so it's skipped when a Work Brief is set (a
+    // removal brief + install template would be worse than an empty box).
+    if (!brief && !scopeTa.value.trim()) {
       scopeTa.value = [
         `Install ${title || contract || 'the fabricated steelwork'} as per drawing ${drawRef || '(see RAMS)'}.`,
         'Fix all items to the structure / substrate as detailed on the drawing.',
         'Provide all connections, splices and bolted joints as shown.'
       ].join('\n');
     }
-    if (!tasksTa.value.trim()) {
+    if (!brief && !tasksTa.value.trim()) {
       tasksTa.value = [
         'Mobilisation & site set-up: attend induction, stage materials and establish the work area.',
         '- Attend the site-specific induction and agree access, welfare and storage with the principal contractor.',
@@ -16872,9 +16875,158 @@ RULES:
         '- Present the completed works to the principal contractor for inspection and sign-off.'
       ].join('\n');
     }
-    if (sts) { sts.style.color = 'var(--muted)'; sts.textContent = 'AI unavailable \u2014 inserted a standard template (' + e.message + '). Edit as needed.'; }
+    if (sts) { sts.style.color = 'var(--muted)'; sts.textContent = brief
+      ? 'AI unavailable (' + e.message + ') \u2014 standard install template skipped because a Work Brief is set; write the scope & sequence manually or retry.'
+      : 'AI unavailable \u2014 inserted a standard template (' + e.message + '). Edit as needed.'; }
   }
   if (btn) { btn.disabled = false; btn.style.opacity = '1'; }
+}
+
+// ── Import an externally-produced RAMS (e.g. drafted in chat) ───────────────
+// Flow: pick the PDF → the normal RAMS modal opens (next register number) →
+// the AI parses the document into the modal fields for an EYEBALL CHECK →
+// Generate re-renders it in the house template and registers it, so future
+// revisions happen in-system like any other RAMS. Two-engine: the AI only
+// READS the document; risk rows are MATCHED against RAMS_RISK_LIBRARY by
+// meaning (refs only) — scores and control wording always come from the
+// library, never from the imported document. Hazards with no library match
+// are reported for a manual ＋ custom-risk add.
+function importRamsDoc() {
+  if (!currentJob?.id) { toast('Open a job first.', 'error'); return; }
+  let input = document.getElementById('ramsImportInput');
+  if (!input) {
+    input = document.createElement('input');
+    input.type = 'file'; input.accept = '.pdf,application/pdf';
+    input.id = 'ramsImportInput'; input.style.display = 'none';
+    document.body.appendChild(input);
+  }
+  input.value = '';
+  input.onchange = async () => {
+    const file = input.files && input.files[0];
+    if (!file) return;
+    if (!/\.pdf$/i.test(file.name)) { toast('Import a PDF — export the chat RAMS as PDF first.', 'error'); return; }
+    try { await openRamsModal(); } catch (e) { return; }
+    _ramsParseImport(file);
+  };
+  input.click();
+}
+
+async function _ramsParseImport(file) {
+  const sts = document.getElementById('ramsScopeStatus');
+  const btn = document.getElementById('ramsGenScopeBtn');
+  if (btn) { btn.disabled = true; btn.style.opacity = '.5'; }
+  if (sts) { sts.style.color = 'var(--muted)'; sts.textContent = 'Reading imported RAMS "' + file.name + '"\u2026'; }
+  try {
+    const b64 = await new Promise((res, rej) => {
+      const r = new FileReader();
+      r.onload = () => res(String(r.result).split(',')[1]);
+      r.onerror = () => rej(new Error('could not read file'));
+      r.readAsDataURL(file);
+    });
+    const libDigest = RAMS_RISK_LIBRARY.map(r => `${r.ref}: ${r.activity} \u2014 ${r.hazard}`).join('\n');
+    const systemPrompt = `You are reading an existing RAMS (Risk Assessment & Method Statement) document for BAMA Fabrication, a structural steel fabricator, so it can be re-issued from their document system. You are a READER: extract only what the document states — never invent, recalculate or embellish. Keep the document's intent exactly (installation vs removal vs alteration of structure). Where a field is not present, return null (or an empty array).`;
+    const userPrompt = `Extract the RAMS content from the attached document and return ONLY a JSON object, no preamble and no Markdown fences, in exactly this shape:
+{
+  "title": "works title or null",
+  "client": "client name or null",
+  "principal": "principal contractor name or null",
+  "drawingRef": "drawing reference(s) or null",
+  "hours": "working-hours line or null",
+  "workBrief": "one or two sentences stating what the works actually are (nature of works, key methods/tools, exclusions), or null",
+  "scope": ["scope of works point", "..."],
+  "tasks": [{ "title": "Stage title", "intro": "one concise sentence summarising the stage", "steps": ["concrete action in this stage", "..."] }],
+  "personnel": ["Full Name", "..."],
+  "libraryRefs": ["R01", "..."],
+  "extraHazards": ["hazard assessed in the document with NO library match (short title)", "..."],
+  "notes": "any additional notes / special requirements, or null"
+}
+RULES:
+- "scope" and "tasks" come from the document's Scope of Works and Method Statement / Sequence of Works, reworded only as much as needed to fit the shape.
+- "libraryRefs": BAMA's curated risk library is listed below. Return the refs whose activity/hazard matches a risk assessed in the document — match on MEANING, not exact wording. Do NOT return refs for hazards the document does not cover.
+- "extraHazards": hazards the document assesses that have no matching library row.
+- Strictly UK English. Output valid JSON only.
+
+BAMA RISK LIBRARY:
+${libDigest}`;
+    const requestBody = {
+      model: 'claude-sonnet-4-6', max_tokens: 6000, system: systemPrompt,
+      messages: [{ role: 'user', content: [
+        { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: b64 }, title: file.name },
+        { type: 'text', text: userPrompt }
+      ] }]
+    };
+    const doFetch = () => fetch(API_BASE + '/api/claude-proxy', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${sessionStorage.getItem('bama_token')}` },
+      body: JSON.stringify(requestBody)
+    });
+    let response = await doFetch();
+    let data = await response.json();
+    if (response.status === 429) {
+      if (sts) sts.textContent = 'Rate limit \u2014 waiting 30s before retry\u2026';
+      await new Promise(r => setTimeout(r, 30000));
+      response = await doFetch(); data = await response.json();
+      if (response.status === 429) throw new Error('still rate limited \u2014 wait a minute and retry');
+    }
+    if (data.error) throw new Error(data.error.message);
+    const rawText = (data.content || []).filter(b => b.type === 'text').map(b => b.text).join('\n').trim();
+    if (!rawText) throw new Error('empty response');
+    const jsonStr = rawText.replace(/```json/gi, '').replace(/```/g, '').trim();
+    let p;
+    try { p = JSON.parse(jsonStr); }
+    catch (_) {
+      const m = jsonStr.match(/\{[\s\S]*\}/);
+      if (!m) throw new Error('could not parse AI response');
+      p = JSON.parse(m[0]);
+    }
+
+    // ── Fill the modal (only where the document actually had something) ──
+    const setIf = (id, v) => { if (v) { const el = document.getElementById(id); if (el) el.value = String(v).trim(); } };
+    setIf('ramsTitle', p.title); ramsSyncDocNo();
+    setIf('ramsClient', p.client);
+    setIf('ramsPrincipal', p.principal);
+    setIf('ramsDrawingRef', p.drawingRef);
+    setIf('ramsHours', p.hours);
+    setIf('ramsWorkBrief', p.workBrief);
+    setIf('ramsNotes', p.notes);
+    if (Array.isArray(p.scope) && p.scope.length) {
+      const ta = document.getElementById('ramsScopeText');
+      if (ta) ta.value = p.scope.map(s => String(s).trim()).filter(Boolean).join('\n');
+    }
+    if (Array.isArray(p.tasks) && p.tasks.length) {
+      const ta = document.getElementById('ramsTasksText');
+      const fmtTask = t => {
+        if (t == null) return '';
+        if (typeof t === 'string') return t.trim();
+        const head = [String(t.title || '').trim(), String(t.intro || t.detail || '').trim()].filter(Boolean).join(': ');
+        const steps = Array.isArray(t.steps) ? t.steps.map(s => String(s).trim()).filter(Boolean).map(s => '- ' + s) : [];
+        return [head, ...steps].filter(Boolean).join('\n');
+      };
+      if (ta) ta.value = p.tasks.map(fmtTask).filter(Boolean).join('\n\n');
+    }
+    // Personnel: restore-by-name against the roster (same path as a revision);
+    // names not on the roster simply stay unticked for a manual add.
+    if (Array.isArray(p.personnel) && p.personnel.length) {
+      ramsInitPersonnel(p.personnel.map(n => ({ name: String(n).trim() })).filter(x => x.name));
+    }
+    // Risks: matched library refs come back TICKED, the rest unticked (same
+    // render path as a revision) — scores/controls stay 100% library.
+    const refs = new Set(Array.isArray(p.libraryRefs) ? p.libraryRefs.map(String) : []);
+    const matched = RAMS_RISK_LIBRARY.filter(r => refs.has(r.ref)).map(r => ({ ...r, controls: (r.controls || []).slice() }));
+    if (matched.length) ramsRenderRiskPicker(matched);
+
+    const extras = (Array.isArray(p.extraHazards) ? p.extraHazards : []).map(s => String(s).trim()).filter(Boolean);
+    if (sts) {
+      sts.style.color = extras.length ? '#e0a800' : '#3ecf8e';
+      sts.textContent = `Imported \u2014 check every field, then Generate to file & register it. ${matched.length} risk row${matched.length === 1 ? '' : 's'} matched to the library.`
+        + (extras.length ? ` NO library match (add via \uFF0B custom risk if needed): ${extras.join('; ')}.` : '');
+    }
+    toast('RAMS imported into the form \u2014 review and Generate to register it.', 'success');
+  } catch (e) {
+    if (sts) { sts.style.color = 'var(--red)'; sts.textContent = 'Import failed (' + e.message + ') \u2014 fill the form manually.'; }
+  } finally {
+    if (btn) { btn.disabled = false; btn.style.opacity = '1'; }
+  }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -18461,6 +18613,7 @@ async function confirmRams() {
       sitePlanDataUri: (typeof _ramsSitePlanDataUri !== 'undefined' && _ramsSitePlanDataUri) || null,
       sitePlanPin: (typeof _ramsSitePlanPin !== 'undefined' && _ramsSitePlanPin) || null,
       notes: getV('ramsNotes'),
+      workBrief: getV('ramsWorkBrief'),
       // Register fields (numbering / revisions / merge)
       ramsNo: _ramsAssignedNo,
       revisionInt: _ramsRevisionInt,
@@ -20029,6 +20182,7 @@ function renderSite() {
       html += `<button class="btn btn-primary" style="padding:8px 16px;font-size:12px" onclick="openUploadFileModal('site')">&#43; Upload File</button>`;
       html += `<button class="btn" style="padding:8px 16px;font-size:12px;background:rgba(255,107,0,.1);border:1px solid rgba(255,107,0,.3);color:var(--accent)" onclick="openSitePackModal()">&#128203; Generate Site Pack</button>`;
       html += `<button class="btn" style="padding:8px 16px;font-size:12px;background:rgba(139,92,246,.1);border:1px solid rgba(139,92,246,.3);color:#a78bfa" onclick="openRamsModal()">&#128203; Generate RAMS</button>`;
+      html += `<button class="btn" style="padding:8px 16px;font-size:12px;background:rgba(139,92,246,.06);border:1px solid rgba(139,92,246,.25);color:#a78bfa" onclick="importRamsDoc()">&#128229; Import RAMS</button>`;
     }
     if (isDraftsman) {
       // Count items eligible for an SDN so the button can show a count

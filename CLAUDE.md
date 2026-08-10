@@ -1078,6 +1078,32 @@ Emergency text (Tier 1 adds RIDDOR + muster-point lines), a Tier-1-only
 with signature space) rendered as section 1, and the Appendix B briefing rows
 (8 / 12 / 16, or the roster size if larger).
 
+**Work Brief (2026-08-10):** optional `ramsWorkBrief` textarea above the
+drawings picker — a free-text note that steers the AI when drawings/photos
+don't tell the story (e.g. "removal of existing structure ONLY — recip saw, no
+new steel supplied"). When set it is injected into the scope prompt as
+AUTHORITATIVE (overrides what photos suggest — a photo of existing structure is
+context, not an install instruction); generation is allowed with a brief and NO
+ticked drawings; the deterministic fallback template (installation-shaped) is
+SKIPPED when a brief is set. Persisted as `rams.workBrief`, restored on
+revision. System prompt is now works-type aware (install / removal / alteration
+sequencing hints).
+
+**Import RAMS (2026-08-10):** "📥 Import RAMS" button next to Generate RAMS in
+`renderSite()` — brings an externally-produced RAMS PDF (e.g. drafted in chat)
+into the system so revisions happen in-register. `importRamsDoc()` (hidden file
+input, PDF only) → opens the normal modal (next register number) →
+`_ramsParseImport(file)` sends the PDF through claude-proxy with a reader-only
+prompt + a digest of `RAMS_RISK_LIBRARY`; the AI returns header fields, scope,
+tasks, personnel NAMES, matched library `refs` and unmatched `extraHazards`.
+Two-engine: risks are ticked by REF against the library (scores/controls stay
+100% library — the imported document's own scoring is never copied); unmatched
+hazards are listed in the status line for a manual ＋ custom-risk add;
+personnel restore by-name via `ramsInitPersonnel` (roster match, same as a
+revision). Nothing is saved until Mateusz eyeballs the form and hits Generate —
+which re-renders the house-style PDF and registers it as a normal first issue
+(Rev 00, next RAMS no) through the untouched `confirmRams` pipeline.
+
 **Site-plan pin (phase 5):** the uploaded plan preview is clickable — the pin
 is stored as `{x,y}` in **% of the image** (`_ramsSitePlanPin`) so it lands in
 the same spot at any render size, shown as a 📍 marker in the modal (Clear-pin
