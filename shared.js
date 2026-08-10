@@ -517,6 +517,9 @@ async function loadProjects() {
         name:   p.project_name,
         status: p.status,
         client: p.company_name || '',
+        // Stored SharePoint folder id — the deterministic path for
+        // findProjectFolder (drive-wide search lags for new D0 folders).
+        spFolderId: p.sharepoint_folder_id || null,
         // Hide-from-workshop flag (undefined until the 2026-07 migration runs → falsy → shown).
         hidden: !!p.hidden_from_workshop,
         // Delivery-address source for the DN "Deliver to" block.
@@ -11708,14 +11711,161 @@ const PERM_TO_TAB = {
 };
 
 // ── SharePoint folder helpers ──
+// Resolve a project's folder deterministically. The old implementation was a
+// single drive-wide Graph SEARCH — but Graph search is index-based and can lag
+// hours behind for freshly created folders, which is exactly what broke
+// drawing-job creation after the D0 taxonomy move (new project folders under
+// BAMA/06 - Projects/<year>/ weren't in the index yet, so the search returned
+// nothing / a stale legacy hit and the whole filing chain went nowhere).
+// Order now:
+//   1. Stored Projects.sharepoint_folder_id (direct item GET — instant, exact).
+//   2. Listing the D0 taxonomy: children of 06 - Projects/<NN - year> (and the
+//      nested 01 - Babcock folder). Listing is strongly consistent — no index.
+//   3. Legacy drive-wide search (pre-D0 folders live outside the taxonomy).
+// A hit via 2/3 is written back onto the Projects row (self-heal) so the next
+// call takes the direct path.
+function _spProjNameMatches(projectId) {
+  const id = String(projectId);
+  return (name) => {
+    const n = String(name || '');
+    return n === id || n.startsWith(id + ' ') || n.startsWith(id + '-') || n.startsWith(id + '_');
+  };
+}
+
+async function _spListChildren(itemId, token) {
+  let url = `https://graph.microsoft.com/v1.0/drives/${BAMA_DRIVE_ID}/items/${itemId}/children?$top=200&$select=id,name,folder,parentReference,webUrl`;
+  const out = [];
+  while (url) {
+    const res = await fetch(url, { headers: { 'Authorization': `Bearer ${token}` } });
+    if (!res.ok) break;
+    const data = await res.json();
+    out.push(...(data.value || []));
+    url = data['@odata.nextLink'] || null;
+  }
+  return out;
+}
+
+// Walk 06 - Projects/<year>/ (newest year first) looking for a folder whose
+// name starts with the project number. Babcock projects nest one level deeper
+// under 01 - Babcock inside the year folder.
+async function _spFindProjectFolderInTaxonomy(projectId, token) {
+  const matches = _spProjNameMatches(projectId);
+  try {
+    const years = (await _spListChildren(SP_TAX.projects, token))
+      .filter(i => i.folder)
+      .sort((a, b) => String(b.name).localeCompare(String(a.name)));
+    for (const y of years) {
+      const kids = (await _spListChildren(y.id, token)).filter(i => i.folder);
+      const hit = kids.find(k => matches(k.name));
+      if (hit) return hit;
+      const bab = kids.find(k => /babcock/i.test(k.name));
+      if (bab) {
+        const bkids = (await _spListChildren(bab.id, token)).filter(i => i.folder);
+        const bh = bkids.find(k => matches(k.name));
+        if (bh) return bh;
+      }
+    }
+  } catch (e) {
+    console.warn('Taxonomy folder scan failed:', e.message);
+  }
+  return null;
+}
+
 async function findProjectFolder(projectId) {
   const token = await getToken();
-  const searchRes = await fetch(
-    `https://graph.microsoft.com/v1.0/drives/${BAMA_DRIVE_ID}/root/search(q='${projectId}')`,
-    { headers: { 'Authorization': `Bearer ${token}` } }
-  );
-  const searchData = await searchRes.json();
-  return searchData.value?.find(item => item.folder && item.name.includes(projectId));
+  const proj = (typeof state !== 'undefined' && Array.isArray(state.projects))
+    ? state.projects.find(p => String(p.id) === String(projectId))
+    : null;
+
+  // 1 — stored id (fast path; also the only path that never mis-matches)
+  if (proj && proj.spFolderId) {
+    try {
+      const res = await fetch(
+        `https://graph.microsoft.com/v1.0/drives/${BAMA_DRIVE_ID}/items/${proj.spFolderId}`,
+        { headers: { 'Authorization': `Bearer ${token}` } }
+      );
+      if (res.ok) {
+        const item = await res.json();
+        if (item.folder) return item;
+      }
+      // 404 / not a folder → stale id, fall through to discovery
+    } catch (e) {
+      console.warn('Stored folder-id lookup failed, falling back:', e.message);
+    }
+  }
+
+  // 2 — deterministic listing under the D0 taxonomy
+  let found = await _spFindProjectFolderInTaxonomy(projectId, token);
+
+  // 3 — legacy drive-wide search (old pre-D0 folders). Prefer an exact
+  // number-prefix match over the old loose .includes() so e.g. "S195" can
+  // never grab "S1953 - …" folders belonging to a different project.
+  if (!found) {
+    try {
+      const searchRes = await fetch(
+        `https://graph.microsoft.com/v1.0/drives/${BAMA_DRIVE_ID}/root/search(q='${projectId}')`,
+        { headers: { 'Authorization': `Bearer ${token}` } }
+      );
+      const searchData = await searchRes.json();
+      const folders = (searchData.value || []).filter(i => i.folder);
+      const matches = _spProjNameMatches(projectId);
+      found = folders.find(i => matches(i.name))
+           || folders.find(i => i.name.includes(projectId));
+    } catch (e) {
+      console.warn('Drive-wide folder search failed:', e.message);
+    }
+  }
+
+  // Self-heal: persist the discovered id so future calls take path 1.
+  if (found && proj && proj.dbId && found.id !== proj.spFolderId) {
+    try {
+      await api.put(`/api/projects/${proj.dbId}`, { sharepoint_folder_id: found.id });
+      proj.spFolderId = found.id;
+    } catch (e) {
+      console.warn('Could not persist discovered folder id (non-fatal):', e.message);
+    }
+  }
+  return found || null;
+}
+
+// findProjectFolder + auto-create. If the folder genuinely doesn't exist
+// (e.g. its creation failed with a non-fatal warning when the project was
+// added), create it under the D0 taxonomy exactly like the new-project flow
+// does — number - client - name in 06 - Projects/<year>/ (or /01 - Babcock
+// for BC-prefixed) with the standard subfolders — and persist the id.
+// Legacy S-prefix projects are never auto-created (their folders live in the
+// old tree and should be linked via Project Tracker → Link SharePoint Folder).
+async function ensureProjectFolder(projectId) {
+  const existing = await findProjectFolder(projectId);
+  if (existing) return existing;
+
+  const idStr = String(projectId);
+  if (/^S/i.test(idStr)) return null;
+
+  const proj = (typeof state !== 'undefined' && Array.isArray(state.projects))
+    ? state.projects.find(p => String(p.id) === idStr)
+    : null;
+  if (!proj) return null;
+
+  const parent = /^BC/i.test(idStr)
+    ? await spBabcockProjectParent()
+    : await spNewProjectParent();
+  const folderName = [idStr, sanitiseFolderSegment(proj.client || ''), sanitiseFolderSegment(proj.name || '')]
+    .filter(Boolean).join(' - ');
+  const folder = await createFolderInDrive(parent.id, folderName);
+  for (const sub of PROJECT_SUBFOLDERS) {
+    try { await createFolderInDrive(folder.id, sub); }
+    catch (e) { console.warn(`Subfolder "${sub}" creation failed:`, e.message); }
+  }
+  if (proj.dbId) {
+    try {
+      await api.put(`/api/projects/${proj.dbId}`, { sharepoint_folder_id: folder.id });
+      proj.spFolderId = folder.id;
+    } catch (e) {
+      console.warn('Could not persist created folder id (non-fatal):', e.message);
+    }
+  }
+  return folder;
 }
 
 // Creates a folder under parentItemId. Retries on transient Graph failures
@@ -12256,9 +12406,12 @@ async function createJob() {
   document.getElementById('createJobProgressText').textContent = 'Finding project folder...';
 
   try {
-    // Find project folder on SharePoint
-    const projectFolder = await findProjectFolder(projectId);
-    if (!projectFolder) throw new Error('Project folder not found on SharePoint');
+    // Find (or create) the project folder on SharePoint. ensureProjectFolder
+    // resolves via stored id → taxonomy listing → legacy search, and will
+    // auto-create the folder under 06 - Projects/<year>/ if it's missing —
+    // Graph search lag on freshly-made D0 folders must never block job setup.
+    const projectFolder = await ensureProjectFolder(projectId);
+    if (!projectFolder) throw new Error('Project folder not found on SharePoint — for legacy S-projects, link the folder first via Project Tracker → the project → Link SharePoint Folder');
 
     document.getElementById('createJobProgressBar').style.width = '20%';
     document.getElementById('createJobProgressText').textContent = 'Creating 02 - Drawings folder...';
