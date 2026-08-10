@@ -444,11 +444,23 @@ function normaliseHoliday(row) {
 }
 
 async function loadTimesheetData() {
-  // Load employees, clockings, project hours, holidays, settings, amendments in parallel from API
+  // Load employees, clockings, project hours, holidays, settings, amendments in parallel from API.
+  //
+  // SQL-COST GUARD (2026-08-10): the kiosk only ever displays the current
+  // week, so on CURRENT_PAGE === 'index' clockings and project-hours are
+  // bounded to the last 14 days via ?from=. Every other page (manager,
+  // office, reports, reconcile, ...) still loads full history — the filter
+  // is kiosk-only. Amendments stay unfiltered everywhere (small table, and
+  // a pending amendment older than 14 days must still show on the kiosk).
+  let recentQ = '';
+  if (CURRENT_PAGE === 'index') {
+    const d = new Date(); d.setDate(d.getDate() - 14);
+    recentQ = '?from=' + d.toISOString().split('T')[0];
+  }
   const [employees, clockings, entries, holidays, settings, amendments] = await Promise.all([
     api.get('/api/employees?all=true').catch(e => { console.warn('Employee load failed:', e.message); return []; }),
-    api.get('/api/clockings').catch(e => { console.warn('Clockings load failed:', e.message); return []; }),
-    api.get('/api/project-hours').catch(e => { console.warn('Project hours load failed:', e.message); return []; }),
+    api.get('/api/clockings' + recentQ).catch(e => { console.warn('Clockings load failed:', e.message); return []; }),
+    api.get('/api/project-hours' + recentQ).catch(e => { console.warn('Project hours load failed:', e.message); return []; }),
     api.get('/api/holidays').catch(e => { console.warn('Holidays load failed:', e.message); return []; }),
     api.get('/api/settings').catch(e => { console.warn('Settings load failed:', e.message); return {}; }),
     api.get('/api/amendments').catch(e => { console.warn('Amendments load failed:', e.message); return []; }),
@@ -3677,6 +3689,17 @@ function startKioskPolling() {
   const POLL_INTERVAL = 10 * 60 * 1000; // 10 minutes
 
   setInterval(async () => {
+    // SQL-COST GUARD (2026-08-10): the workshop kiosk browser stays open
+    // 24/7, and a query every 10 min stops the Serverless DB from ever
+    // auto-pausing (needs ~60 min of silence). Mirror the keep-warm window:
+    // only poll 05:00-20:59 Mon-Sat, and only when the tab is visible.
+    // Outside the window the kiosk keeps its last-loaded data; any user
+    // interaction still triggers its own fresh API calls as normal.
+    const now = new Date();
+    const hr = now.getHours(), day = now.getDay(); // 0 = Sunday
+    if (day === 0 || hr < 5 || hr > 20) return;
+    if (document.hidden) return;
+
     // Bail if an employee panel is open
     if (state.currentEmployee) return;
 

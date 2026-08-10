@@ -710,6 +710,16 @@ mark-fabricated step). Migration: `api/sql/add-staged-fabrication.sql`.
 
 ## Key conventions
 
+- **SQL Serverless cost rule (2026-08-10 — do not regress).** The Azure SQL DB is
+  Serverless and must be allowed to auto-pause (~60 min of zero activity). NOTHING
+  may hit SQL on a timer outside working hours: `keep-warm.js` deliberately does
+  NOT touch the pool, and `startKioskPolling()` (shared.js) is guarded to
+  05:00–20:59 Mon–Sat + `!document.hidden`. Any new polling/timer feature —
+  frontend or backend — must carry the same working-hours guard, or the DB runs
+  24/7 and burns the vCore allowance. Also: the kiosk's `loadTimesheetData()`
+  bounds clockings + project-hours to the last 14 days (`?from=`) — kiosk-only,
+  every other page loads full history. New list endpoints polled by any page
+  should always be date-bounded.
 - **One shared.js, page-aware.** The module detects the page it's on via
   `CURRENT_PAGE = 'index' | 'hub' | 'manager' | 'office' | 'projects'` derived from
   `window.location.pathname`. Use this guard for page-specific logic. Steel database
