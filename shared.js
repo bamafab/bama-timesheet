@@ -11986,8 +11986,13 @@ window.bamaRelinkDrawingJob = async function bamaRelinkDrawingJob(projectNumber)
         if (!key) continue;
         const item = fileMap.get(key);
         if (!item) { report.push(`  ${table} #${f.id} "${key}": no matching file on SharePoint — re-upload`); continue; }
-        const storedId = f.fileId || f.sharepoint_file_id;
-        if (item.id !== storedId) {
+        const storedId  = f.fileId || f.sharepoint_file_id;
+        const storedUrl = f.webUrl || f.web_url || f.sharepoint_web_url || null;
+        // Rewrite when EITHER the id or the stored web_url is stale. Clicks
+        // open the stored web_url string, so a server-side move that kept the
+        // id alive but changed the path still 404s until the URL is rewritten
+        // (exactly the C260740 case — 43 live files, stale URLs).
+        if (item.id !== storedId || (item.webUrl && item.webUrl !== storedUrl)) {
           updates.push({
             table, id: f.id,
             sharepoint_file_id: item.id,
