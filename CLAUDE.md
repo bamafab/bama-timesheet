@@ -710,6 +710,21 @@ mark-fabricated step). Migration: `api/sql/add-staged-fabrication.sql`.
 
 ## Key conventions
 
+- **SharePoint item-id stability rule (2026-08-10 — do not regress).** Graph item
+  ids survive renames and SharePoint **web UI "Move to"** — but Explorer /
+  OneDrive-sync moves execute as copy+delete and mint NEW ids, orphaning every
+  stored `sharepoint_folder_id` / `sharepoint_file_id`. Consequences:
+  project-folder resolution (`findProjectFolder`) is stored-id-first → taxonomy
+  listing → exact-prefix legacy search, NEVER substring `.includes()` matching
+  (C260740 matched inside "BC0089 - Babcock - C2607406", 2026-08-10); every
+  drawing-job upload path calls `ensureJobFolderAlive(job)` which re-resolves a
+  404ing folder id by name under `<project>/02 - Drawings` and persists it
+  (self-heal); full repair after a bad move is `bamaRelinkDrawingJob('<project>')`
+  in the browser console (Projects page) — relinks job folders and rewrites
+  DrawingRevisionFiles / DrawingElementFiles / JobBomItems file ids by filename
+  match via `POST /api/drawings-relink-files`. Tell users to move folders in the
+  SharePoint web UI, never Explorer.
+
 - **SQL Serverless cost rule (2026-08-10 — do not regress).** The Azure SQL DB is
   Serverless and must be allowed to auto-pause (~60 min of zero activity). NOTHING
   may hit SQL on a timer outside working hours: `keep-warm.js` deliberately does
