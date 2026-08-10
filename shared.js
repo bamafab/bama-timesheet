@@ -12009,6 +12009,13 @@ window.bamaRelinkDrawingJob = async function bamaRelinkDrawingJob(projectNumber)
       const bom = await api.get('/api/job-bom-items?job_id=' + j.id);
       collect((Array.isArray(bom) ? bom : []).filter(b => b.file_name), 'bom');
     } catch (e) { /* job may have no BOM — fine */ }
+
+    // 4 — assembly drawings (JobAssemblies carries the per-assembly PDF ids —
+    // these are the 04 - Assembly files, e.g. Advance Steel exports)
+    try {
+      const asms = await api.get('/api/job-assemblies?job_id=' + j.id);
+      collect((Array.isArray(asms) ? asms : []).filter(a => a.file_name), 'assembly');
+    } catch (e) { /* job may have no assemblies — fine */ }
   }
 
   if (updates.length) {

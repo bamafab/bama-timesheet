@@ -367,7 +367,9 @@ app.http('drawings-relink-files', {
             const TABLES = {
                 revision: { table: 'DrawingRevisionFiles', urlCol: 'web_url' },
                 element:  { table: 'DrawingElementFiles',  urlCol: 'web_url' },
-                bom:      { table: 'JobBomItems',          urlCol: 'sharepoint_web_url' }
+                bom:      { table: 'JobBomItems',          urlCol: 'sharepoint_web_url' },
+                assembly: { table: 'JobAssemblies',        urlCol: 'sharepoint_web_url' },
+                despatch: { table: 'JobBomDespatches',     urlCol: 'sharepoint_web_url' }
             };
             let applied = 0;
             for (const u of updates) {
