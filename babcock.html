@@ -268,8 +268,18 @@
     <div style="font-size:13px;color:var(--muted);margin-bottom:14px;line-height:1.5">
       Generate a Purchase Order for
       <b><span id="bptbsProjectRef" style="font-family:var(--font-mono);color:var(--accent)">BC####</span></b>
-      — Amount: <b><span id="bptbsAmount">£0.00</span></b>
       <div id="bptbsBreakdown" style="font-size:11px;color:var(--subtle);margin-top:4px"></div>
+      <div id="bptbsZeroWarn" style="display:none;margin-top:8px;padding:8px 10px;border:1px solid var(--red);border-radius:6px;background:rgba(208,2,27,.08);font-size:12px;color:var(--red);line-height:1.5"></div>
+    </div>
+
+    <div style="margin-bottom:14px">
+      <div class="field-label">PO AMOUNT (NET &pound;) <span style="color:var(--red)">*</span></div>
+      <input type="number" step="0.01" min="0" class="field-input" id="bptbsAmount"
+             style="font-size:14px;font-family:var(--font-mono)"
+             autocomplete="off" oninput="bptbsAmountChanged()">
+      <div style="font-size:11px;color:var(--subtle);margin-top:4px">
+        Pre-filled as pre-markup value minus the project&rsquo;s PO spend &mdash; edit if the figure is wrong. A &pound;0.00 PO cannot be generated.
+      </div>
     </div>
 
     <div style="margin-bottom:14px">
@@ -1053,6 +1063,6 @@
 <!-- PDF.js: used by the "Approved to Pay" step to OCR the uploaded COUPA invoice -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <script>pdfjsLib.GlobalWorkerOptions.workerSrc='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';</script>
-<script src="shared.js?v=20260810h"></script>
+<script src="shared.js?v=20260813"></script>
 </body>
 </html>

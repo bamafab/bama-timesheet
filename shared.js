@@ -32603,6 +32603,34 @@ function closeBabcockPoToBamaSwModal() {
   _bpoToBswContext = null;
 }
 
+// ── Console diagnostic: why did a Bama SW PO compute the value it did? ──
+// Usage: bamaBswPoAudit('B0125')  → prints total, markup, pre-markup,
+// every deducted project PO (ref/supplier/net) and the resulting figure.
+window.bamaBswPoAudit = async function(quoteRef) {
+  const q = (_babcockQuotes || []).find(x => (x.quote_ref || '').toLowerCase() === String(quoteRef).toLowerCase())
+         || (await api.get('/api/babcock-quotes')).find(x => (x.quote_ref || '').toLowerCase() === String(quoteRef).toLowerCase());
+  if (!q) { console.error('Quote not found:', quoteRef); return; }
+  const total     = Number(q.total_value || 0);
+  const markupPct = Number(q.markup_pct  || 0);
+  const original  = _r2(markupPct > 0 ? total / (1 + markupPct / 100) : total);
+  console.log(`── Bama SW PO audit for ${q.quote_ref} ──`);
+  console.log(`total_value (marked-up): ${fmtCurrency(total)}   markup_pct: ${markupPct}%   pre-markup: ${fmtCurrency(original)}`);
+  console.log(`linked_project_id: ${q.linked_project_id || '(none — no deduction possible)'}`);
+  if (!q.linked_project_id) return { total, markupPct, original, netTotal: original };
+  const pos    = await api.get(`/api/purchase-orders?project_id=${q.linked_project_id}`);
+  const isBsw  = p => /bama\s*s(\.|outh)?\s*w(\.|est)?/i.test(p.supplier_name || '');
+  const rows   = (pos || []).map(p => ({
+    ref: p.reference || `#${p.id}`, supplier: p.supplier_name || '?', status: p.status,
+    gross: Number(p.total_value || 0), net: _poNet(p),
+    counted: p.status !== 'Cancelled' && !isBsw(p) ? 'YES' : (isBsw(p) ? 'no (Bama SW)' : 'no (Cancelled)')
+  }));
+  console.table(rows);
+  const poExpenses = sumMoney(rows.filter(r => r.counted === 'YES'), r => r.net);
+  const netTotal   = Math.max(0, _r2(original - poExpenses));
+  console.log(`PO spend deducted: ${fmtCurrency(poExpenses)}   → computed PO value: ${fmtCurrency(netTotal)}${netTotal <= 0 ? '  ⚠ ZERO — spend ≥ pre-markup' : ''}`);
+  return { total, markupPct, original, poExpenses, netTotal, rows };
+};
+
 async function handleAdvanceFromPaymentReceived(q, next) {
   const total     = Number(q.total_value || 0);
   const markupPct = Number(q.markup_pct  || 0);
@@ -32615,13 +32643,17 @@ async function handleAdvanceFromPaymentReceived(q, next) {
   // never a PurchaseOrders row (PDF + babcock-quotes fields only), so there is
   // no self-double-count. Non-fatal: if the fetch fails we fall back to the
   // undeducted figure and say so — the user confirms the amount in the modal.
-  let poExpenses = 0, poCount = 0, poFetchFailed = false;
+  let poExpenses = 0, poCount = 0, poFetchFailed = false, poList = [];
   if (q.linked_project_id) {
     try {
       const pos    = await api.get(`/api/purchase-orders?project_id=${q.linked_project_id}`);
-      const active = (pos || []).filter(p => p.status !== 'Cancelled');
+      // Exclude POs raised TO Bama South West themselves — deducting those
+      // would double-count the very payment this PO represents.
+      const isBsw  = p => /bama\s*s(\.|outh)?\s*w(\.|est)?/i.test(p.supplier_name || '');
+      const active = (pos || []).filter(p => p.status !== 'Cancelled' && !isBsw(p));
       poExpenses   = sumMoney(active, _poNet);
       poCount      = active.length;
+      poList       = active.map(p => ({ ref: p.reference || `#${p.id}`, supplier: p.supplier_name || '?', net: _poNet(p) }));
     } catch (e) {
       poFetchFailed = true;
       console.warn('Could not load project POs for Bama SW deduction:', e);
@@ -32637,11 +32669,11 @@ async function handleAdvanceFromPaymentReceived(q, next) {
     projectNumber = babcockProjectNumberFor(q.quote_ref || '');
   }
 
-  _bpoToBswContext = { quote: q, next, netTotal, projectNumber };
+  _bpoToBswContext = { quote: q, next, netTotal, projectNumber, original, poExpenses, poList };
 
   document.getElementById('bptbsProjectRef').textContent = projectNumber || q.quote_ref || '';
   const amountEl = document.getElementById('bptbsAmount');
-  amountEl.textContent = fmtCurrency(netTotal);
+  amountEl.value = netTotal.toFixed(2);
   amountEl.title = poCount
     ? `Pre-markup ${fmtCurrency(original)} − ${poCount} project PO${poCount !== 1 ? 's' : ''} (nett) ${fmtCurrency(poExpenses)}`
     : `Pre-markup value ${fmtCurrency(original)} — no project PO expenses to deduct`;
@@ -32651,15 +32683,41 @@ async function handleAdvanceFromPaymentReceived(q, next) {
       ? `Pre-markup ${fmtCurrency(original)} − ${poCount} PO${poCount !== 1 ? 's' : ''} nett ${fmtCurrency(poExpenses)}`
       : (poFetchFailed ? '⚠ Could not load project POs — no expense deduction applied' : '');
   }
+  // Zero/negative guard — never let a £0.00 PO out silently. Show exactly
+  // which POs ate the value so the user can decide the right figure.
+  const warnEl = document.getElementById('bptbsZeroWarn');
+  if (warnEl) {
+    if (netTotal <= 0) {
+      const rows = poList.map(p => `${escapeHtml(p.ref)} — ${escapeHtml(p.supplier)} — ${fmtCurrency(p.net)}`).join('<br>');
+      warnEl.innerHTML = `<b>⚠ Computed PO value is £0.00</b> — project PO spend (${fmtCurrency(poExpenses)}) meets or exceeds the pre-markup value (${fmtCurrency(original)}).<br>` +
+        (rows ? `<span style="color:var(--muted)">Deducted POs:</span><br><span style="font-family:var(--font-mono);font-size:11px;color:var(--muted)">${rows}</span><br>` : '') +
+        `Enter the correct amount above before generating.`;
+      warnEl.style.display = 'block';
+    } else {
+      warnEl.style.display = 'none';
+      warnEl.innerHTML = '';
+    }
+  }
+  bptbsAmountChanged();
   if (poFetchFailed) toast('Could not load project POs — amount shown WITHOUT expense deduction', 'warning');
   document.getElementById('bptbsPoNumber').value         = q.bama_sw_po_number || '';
   const due = new Date(); due.setDate(due.getDate() + 30);
   document.getElementById('bptbsDueDate').value          = due.toISOString().split('T')[0];
-  document.getElementById('bptbsConfirmBtn').disabled    = false;
   document.getElementById('bptbsConfirmBtn').textContent = 'Generate & Email';
+  bptbsAmountChanged();   // gate on amount > 0 (never re-enable blindly)
 
   document.getElementById('babcockPoToBamaSwModal').classList.add('active');
   setTimeout(() => document.getElementById('bptbsPoNumber')?.focus(), 60);
+}
+
+// Enable/disable Generate depending on the amount field. £0.00 or
+// negative is never generatable — the Fault-4 deduction can legitimately
+// compute ≤ 0 (project PO spend ≥ pre-markup value) and the user must
+// consciously type the correct figure.
+function bptbsAmountChanged() {
+  const btn = document.getElementById('bptbsConfirmBtn');
+  const v   = parseFloat(document.getElementById('bptbsAmount')?.value);
+  if (btn) btn.disabled = !(isFinite(v) && v > 0);
 }
 
 async function confirmRaisePOToBamaSw() {
@@ -32667,11 +32725,18 @@ async function confirmRaisePOToBamaSw() {
 
   const poNumber   = (document.getElementById('bptbsPoNumber').value  || '').trim();
   const dueDateIso = (document.getElementById('bptbsDueDate').value   || '').trim();
+  const amountVal  = parseFloat(document.getElementById('bptbsAmount').value);
 
   if (!poNumber)   { toast('PO number is required',  'error'); document.getElementById('bptbsPoNumber').focus();  return; }
   if (!dueDateIso) { toast('Due date is required',   'error'); document.getElementById('bptbsDueDate').focus();   return; }
+  if (!isFinite(amountVal) || amountVal <= 0) {
+    toast('PO amount must be greater than £0.00', 'error');
+    document.getElementById('bptbsAmount').focus();
+    return;
+  }
 
-  const { quote: q, next, netTotal, projectNumber } = _bpoToBswContext;
+  const { quote: q, next, projectNumber } = _bpoToBswContext;
+  const netTotal = _r2(amountVal);
   const btn = document.getElementById('bptbsConfirmBtn');
   btn.disabled = true; btn.textContent = 'Generating…';
 
