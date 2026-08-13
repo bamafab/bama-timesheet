@@ -8056,6 +8056,14 @@ async function duplicateQuote(id) {
       sourceData = { ...source, ...JSON.parse(row.quote_data || '{}'), id: source.id, _fromSQL: true };
     } catch(e) { toast('Could not load source quote', 'error'); return; }
   }
+
+  // Two flavours (2026-08-13): same job priced for two clients means the second
+  // quote already exists from the tender (with its own number + client). Instead
+  // of forcing a fresh number every time, offer "copy INTO an existing quote".
+  const mode = await _dupModeChoice(sourceData.ref || '');
+  if (!mode) return;
+  if (mode === 'existing') { await _dupIntoExisting(sourceData); return; }
+
   let ref;
   try { ref = await nextQuoteRef(); } catch(e) { toast('Could not get next reference', 'error'); return; }
   if (quotes.some(q => q.ref === ref)) {
@@ -8090,6 +8098,191 @@ async function duplicateQuote(id) {
   } catch(e) {
     toast('Failed to duplicate: ' + e.message, 'error');
   }
+}
+
+// ── Duplicate → "Add to existing quote" (2026-08-13) ────────────────────────
+// Choice modal: create a fresh [COPY] draft (classic behaviour) or pour this
+// quote's entire contents into a quote that already exists (e.g. created from
+// a tender for the second client). The target KEEPS its number, revision,
+// status, client details, tender/SharePoint links and revision history — only
+// the work content (takeoff, areas, pricing, rates, scope, notes) is replaced.
+function _dupModeChoice(sourceRef) {
+  return new Promise(resolve => {
+    let m = document.getElementById('dupModeModal');
+    if (!m) {
+      m = document.createElement('div');
+      m.className = 'modal-overlay';
+      m.id = 'dupModeModal';
+      m.style.zIndex = '9998';
+      document.body.appendChild(m);
+    }
+    m.innerHTML = `
+      <div class="modal" style="max-width:440px;padding:24px 24px 20px">
+        <div style="font-size:15px;font-weight:700;color:var(--text);margin-bottom:6px">Duplicate ${escHtml(sourceRef)}</div>
+        <div style="font-size:12.5px;color:var(--muted);line-height:1.55;margin-bottom:16px">Where should the copy go?</div>
+        <div style="display:flex;flex-direction:column;gap:10px;margin-bottom:16px">
+          <button id="dupModeNew" style="text-align:left;background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:12px 14px;cursor:pointer;color:var(--text)">
+            <div style="font-weight:700;font-size:13px;margin-bottom:3px">\u2795 Create a new quote</div>
+            <div style="font-size:11.5px;color:var(--muted);line-height:1.5">Fresh draft with the next available number, marked [COPY].</div>
+          </button>
+          <button id="dupModeExisting" style="text-align:left;background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:12px 14px;cursor:pointer;color:var(--text)">
+            <div style="font-weight:700;font-size:13px;margin-bottom:3px">\ud83d\udce5 Copy into an existing quote</div>
+            <div style="font-size:11.5px;color:var(--muted);line-height:1.5">Same job for a second client: pick the quote already created from the tender. It keeps its own number, client details and tender link \u2014 only the takeoff, pricing and scope are copied over.</div>
+          </button>
+        </div>
+        <div style="display:flex;justify-content:flex-end">
+          <button class="btn btn-ghost" id="dupModeCancel">Cancel</button>
+        </div>
+      </div>`;
+    m.classList.add('active');
+    const done = v => { m.classList.remove('active'); m.innerHTML = ''; resolve(v); };
+    document.getElementById('dupModeNew').onclick      = () => done('new');
+    document.getElementById('dupModeExisting').onclick = () => done('existing');
+    document.getElementById('dupModeCancel').onclick   = () => done(null);
+    m.onclick = e => { if (e.target === m) done(null); };
+  });
+}
+
+// Searchable target picker — lists non-archived quotes (drafts first),
+// filtered as you type on ref / project / client.
+function _dupPickTarget(sourceData) {
+  return new Promise(resolve => {
+    let m = document.getElementById('dupPickModal');
+    if (!m) {
+      m = document.createElement('div');
+      m.className = 'modal-overlay';
+      m.id = 'dupPickModal';
+      m.style.zIndex = '9998';
+      document.body.appendChild(m);
+    }
+    const candidates = quotes
+      .filter(q => q.id != sourceData.id && q.status !== 'deleted')
+      .sort((a, b) => {
+        const ad = a.status === 'draft' ? 0 : 1, bd = b.status === 'draft' ? 0 : 1;
+        if (ad !== bd) return ad - bd;
+        return String(b.ref || '').localeCompare(String(a.ref || ''));
+      });
+    m.innerHTML = `
+      <div class="modal" style="max-width:480px;padding:20px">
+        <div style="font-size:15px;font-weight:700;color:var(--text);margin-bottom:4px">Copy ${escHtml(sourceData.ref || '')} into\u2026</div>
+        <div style="font-size:11.5px;color:var(--muted);line-height:1.5;margin-bottom:12px">The quote you pick keeps its number, client and tender link. Its current takeoff and pricing will be replaced (a snapshot is kept in its revision history).</div>
+        <input id="dupPickSearch" type="text" placeholder="Search by ref, project or client\u2026"
+          style="width:100%;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:8px 12px;color:var(--text);font-size:13px;margin-bottom:10px">
+        <div id="dupPickList" style="max-height:320px;overflow-y:auto;display:flex;flex-direction:column;gap:6px;margin-bottom:14px"></div>
+        <div style="display:flex;justify-content:flex-end">
+          <button class="btn btn-ghost" id="dupPickCancel">Cancel</button>
+        </div>
+      </div>`;
+    m.classList.add('active');
+    const done = v => { m.classList.remove('active'); m.innerHTML = ''; resolve(v); };
+    const list = document.getElementById('dupPickList');
+    const draw = filter => {
+      const f = (filter || '').toLowerCase().trim();
+      const rows = candidates.filter(q => !f ||
+        String(q.ref || '').toLowerCase().includes(f) ||
+        String(q.project || '').toLowerCase().includes(f) ||
+        String(q.company || '').toLowerCase().includes(f));
+      list.innerHTML = rows.length ? rows.slice(0, 60).map(q => `
+        <button data-qid="${q.id}" style="text-align:left;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:8px 12px;cursor:pointer;color:var(--text);display:flex;align-items:center;gap:10px">
+          <span style="font-weight:700;font-size:12.5px;white-space:nowrap">${escHtml(q.ref || '')}</span>
+          <span style="font-size:12px;color:var(--muted);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escHtml(q.project || '')}${q.company ? ' \u2014 ' + escHtml(q.company) : ''}</span>
+          <span style="font-size:10px;color:var(--subtle);text-transform:uppercase;white-space:nowrap">${escHtml(q.status || 'draft')}</span>
+        </button>`).join('')
+        : '<div style="font-size:12px;color:var(--subtle);padding:10px 4px">No matching quotes.</div>';
+      list.querySelectorAll('button[data-qid]').forEach(b => {
+        b.onclick = () => done(b.getAttribute('data-qid'));
+      });
+    };
+    draw('');
+    const inp = document.getElementById('dupPickSearch');
+    inp.oninput = () => draw(inp.value);
+    setTimeout(() => inp.focus(), 50);
+    document.getElementById('dupPickCancel').onclick = () => done(null);
+    m.onclick = e => { if (e.target === m) done(null); };
+  });
+}
+
+async function _dupIntoExisting(sourceData) {
+  const targetId = await _dupPickTarget(sourceData);
+  if (!targetId) return;
+  const local = quotes.find(q => q.id == targetId);
+  if (!local) return;
+  const confirmed = await bamaConfirm(
+    `Copy everything from ${sourceData.ref} into ${local.ref}? ${local.ref} keeps its number, revision, status, client details and tender link \u2014 its current takeoff, pricing and scope will be replaced. A snapshot of ${local.ref} as it is now is kept in its revision history.`,
+    'Copy into existing quote'
+  );
+  if (!confirmed) return;
+
+  // Always fetch the target fresh — columns are authoritative (F2/F9) and the
+  // sidebar entry may only hold metadata.
+  let targetFull;
+  try {
+    const row = await qbFetch('GET', `/api/qb-quotes/${targetId}`);
+    const blob = JSON.parse(row.quote_data || '{}');
+    targetFull = { ...blob,
+      id:           row.id,
+      ref:          row.reference,
+      revision:     row.revision     || blob.revision || '',
+      status:       row.status       || blob.status   || 'draft',
+      date:         blob.date || row.date_created,
+      dateSent:     row.date_sent    || blob.dateSent || '',
+      decisionDue:  row.decision_due || blob.decisionDue || '',
+      chasingDate:  row.chasing_date || '',
+      chasedAt:     row.chased_at    || null,
+      chaseCount:   row.chase_count  || 0,
+      preparedBy:   row.prepared_by  || blob.preparedBy || '',
+      company:      row.company      ?? blob.company ?? '',
+      contact:      row.contact      ?? blob.contact ?? '',
+      email:        row.email        ?? blob.email   ?? '',
+      phone:        row.phone        ?? blob.phone   ?? '',
+      siteAddress:  row.site_address ?? blob.siteAddress ?? '',
+      lossReason:     row.loss_reason     ?? blob.lossReason     ?? '',
+      lossCompetitor: row.loss_competitor ?? blob.lossCompetitor ?? '',
+      lossComment:    row.loss_comment    ?? blob.lossComment    ?? '',
+      sharepointFolderId:       row.sharepoint_folder_id        || null,
+      sharepointTenderFolderId: row.sharepoint_tender_folder_id || null,
+      project_id:   row.project_id   || null,
+      _fromSQL:     true
+    };
+  } catch(e) { toast('Could not load target quote: ' + e.message, 'error'); return; }
+
+  // Snapshot the target BEFORE it's overwritten — recoverable from rev history.
+  try { takeRevSnapshot('duplicate_merge', targetFull); } catch(e) {}
+
+  // Build the merged quote: source content, target identity.
+  const merged = JSON.parse(JSON.stringify(sourceData));
+  delete merged._computed;
+  delete merged.revSnapshots;   // never inherit the SOURCE's history
+  // Fields the TARGET keeps: identity, lifecycle, client, tender/ERP/SharePoint
+  // links, chase state and its own revision history (incl. the snapshot above).
+  const KEEP = ['id','ref','revision','status','date','validUntil','dateSent',
+    'decisionDue','chasingDate','chasedAt','chaseCount','preparedBy',
+    'company','contact','email','phone','clientAddress','clientAddressParts',
+    'lossReason','lossCompetitor','lossComment',
+    'sharepointFolderId','sharepointTenderFolderId','project_id','erpProjectId',
+    'revSnapshots','_fromSQL'];
+  KEEP.forEach(f => {
+    if (targetFull[f] !== undefined) merged[f] = JSON.parse(JSON.stringify(targetFull[f] ?? null));
+    else delete merged[f];
+  });
+  // Same job: if the tender already set a project name / site address on the
+  // target, keep it; otherwise take the source's.
+  if ((targetFull.project || '').trim()) merged.project = targetFull.project;
+  if ((targetFull.siteAddress || '').trim()) {
+    merged.siteAddress = targetFull.siteAddress;
+    merged._siteLat = targetFull._siteLat; merged._siteLng = targetFull._siteLng;
+  }
+
+  // Replace the sidebar entry wholesale (no leftover keys from either side),
+  // clear the contested-column baseline so the save pushes every column from
+  // the merged (authoritative) object, then open + persist.
+  const idx = quotes.findIndex(q => q.id == targetId);
+  if (idx >= 0) quotes[idx] = merged; else quotes.unshift(merged);
+  delete _qbColSnapshots[merged.id];
+  renderSidebar();
+  await selectQuote(merged.id);
+  await saveAll();
+  toast(`Copied ${sourceData.ref} into ${merged.ref} \u2014 client and tender link untouched`, 'success');
 }
 
 function setStatus(val) {
@@ -22284,7 +22477,7 @@ const HELP_CONTENT = {
         <div class="h-faq"><div class="h-q">Does it save automatically?</div>
         <div class="h-a">Yes — to Azure SQL on every change. You can also press Save manually.</div></div>
         <div class="h-faq"><div class="h-q">Can I duplicate a quote?</div>
-        <div class="h-a">Right-click a quote in the sidebar and choose Duplicate. Useful for variations or revisions.</div></div>
+        <div class="h-a">Yes \u2014 the \u29c9 Duplicate button (top bar or the \u29c9 icon on a sidebar row) now asks where the copy should go. <strong>Create a new quote</strong> makes a fresh [COPY] draft with the next available number \u2014 the classic behaviour, good for variations and revisions. <strong>Copy into an existing quote</strong> is for pricing the same job for two clients: pick the quote already created from the tender and the entire takeoff, areas, pricing, rates and scope are poured into it \u2014 the target keeps its own number, revision, status, client details, tender link and SharePoint folder, so no numbering mess. The target's previous contents are snapshotted into its revision history first, so nothing is lost.</div></div>
         <div class="h-faq"><div class="h-q">How do I filter the sidebar list?</div>
         <div class="h-a">Use the pills under the search box: <strong>All / Draft / Sent / Chase / Won / Lost</strong>. Each shows a live count. <strong>Draft</strong> = still to quote; <strong>Sent</strong> = all submitted; <strong>Chase</strong> = sent quotes whose chase date is today or overdue (the ones that show red). Tap a pill to see only those; tap All to clear.</div></div>
       </div>`
