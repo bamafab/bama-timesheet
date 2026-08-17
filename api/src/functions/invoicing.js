@@ -767,8 +767,12 @@ app.http('applications-certificate-confirm', {
 });
 
 // Generate an Invoice from a Certified AFP.
-// New Invoice: kind=invoice, status=Draft, ref=auto, source_afp_id=N,
-// retention copied from AFP, lines copied from ApplicationLineItems.
+// New Invoice: kind=invoice, status=Draft, ref=auto, source_afp_id=N.
+// Invoice value = the certified payment due (already net of retention).
+// Retention is held at PROJECT level (Applications.certified_retention feeds
+// CVR "Retention held") and must NEVER be deducted again on the invoice —
+// see the 17/08/2026 INV0316 bug where cumulative retention was subtracted
+// from an amount-due figure that was already net of retention.
 app.http('applications-generate-invoice', {
     methods: ['POST'],
     authLevel: 'anonymous',
@@ -802,11 +806,25 @@ app.http('applications-generate-invoice', {
             // Allocate invoice ref
             const invRef = await nextInvoiceRef('invoice');
 
-            // Use certified net if present, otherwise applied net (defensive)
-            const netAmount = app2.certified_value_net != null ? Number(app2.certified_value_net)
-                            : (app2.applied_value_net != null ? Number(app2.applied_value_net) : 0);
-            const retention = app2.certified_retention != null ? Number(app2.certified_retention)
-                            : (app2.applied_retention != null ? Number(app2.applied_retention) : 0);
+            // Round at every step (see the MONEY section in shared.js) so this
+            // matches what the invoice modal and the PDF compute to the penny.
+            const r2 = v => Math.round((Number(v) || 0) * 100) / 100;
+
+            // Invoice net = the certified PAYMENT DUE excluding VAT.
+            // certified_gross is the "payment due this period" figure off the
+            // notice (post-retention); strip any VAT they showed. Fall back to
+            // certified net − retention (this-period figures), then to the
+            // applied equivalents. Retention itself is NOT deducted here —
+            // the due figure is already net of it and retention is tracked on
+            // the AFP/project, not the invoice.
+            const netAmount =
+                (app2.certified_gross != null && Number(app2.certified_gross) > 0)
+                    ? r2(Number(app2.certified_gross) - Number(app2.certified_vat || 0))
+                : (app2.certified_value_net != null && Number(app2.certified_value_net) !== 0)
+                    ? r2(Number(app2.certified_value_net) - Number(app2.certified_retention || 0))
+                : (app2.applied_gross != null && Number(app2.applied_gross) > 0)
+                    ? r2(Number(app2.applied_gross) - Number(app2.applied_vat || 0))
+                    : r2(Number(app2.applied_value_net || 0) - Number(app2.applied_retention || 0));
 
             // VAT position comes from the CLIENT's vat_treatment setting —
             // never from the AFP figures (certs frequently show £0 VAT under
@@ -817,10 +835,7 @@ app.http('applications-generate-invoice', {
             //   zero           → no VAT at all
             const treatment = ['standard', 'reverse_charge', 'zero'].includes(app2.client_vat_treatment)
                             ? app2.client_vat_treatment : 'reverse_charge';
-            // Round at every step (see the MONEY section in shared.js) so this
-            // matches what the invoice modal and the PDF compute to the penny.
-            const r2 = v => Math.round((Number(v) || 0) * 100) / 100;
-            const vatBase = r2(r2(netAmount) - r2(retention));
+            const vatBase = r2(netAmount);
             const vatAmount     = treatment === 'standard'      ? r2(vatBase * 0.20) : 0;
             const reverseCharge = treatment === 'reverse_charge' ? r2(vatBase * 0.20) : 0;
             const grossAmount   = r2(vatBase + vatAmount);
@@ -880,7 +895,7 @@ app.http('applications-generate-invoice', {
                     netAmount,
                     vatAmount,
                     reverseChargeAmount: reverseCharge,
-                    retention,
+                    retention:           0, // held on the project (AFP), never deducted on the invoice
                     grossAmount,
                     createdBy
                 }
