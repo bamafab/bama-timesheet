@@ -704,6 +704,7 @@ app.http('applications-certificate-confirm', {
                     certified_gross     = @certifiedGross,
                     certificate_ref     = @certificateRef,
                     certificate_date    = @certificateDate,
+                    certificate_final_payment_date = @certFinalPaymentDate,
                     status              = 'Certified',
                     certified_at        = GETUTCDATE(),
                     updated_at          = GETUTCDATE()
@@ -715,7 +716,8 @@ app.http('applications-certificate-confirm', {
                     certifiedRetention:body.certified_retention != null ? Number(body.certified_retention) : null,
                     certifiedGross:    body.certified_gross     != null ? Number(body.certified_gross)     : null,
                     certificateRef:    body.certificate_ref ?? null,
-                    certificateDate:   body.certificate_date ?? null
+                    certificateDate:   body.certificate_date ?? null,
+                    certFinalPaymentDate: body.certificate_final_payment_date ?? null
                 }
             );
 
@@ -840,13 +842,21 @@ app.http('applications-generate-invoice', {
             const reverseCharge = treatment === 'reverse_charge' ? r2(vatBase * 0.20) : 0;
             const grossAmount   = r2(vatBase + vatAmount);
 
-            // Due date = invoice date + client payment terms (default 30 days)
-            const termsDays = Number(app2.client_payment_terms) > 0 ? Number(app2.client_payment_terms) : 30;
+            // Due date: the certificate's "Final Date for payment" wins when
+            // present (that is the contractual date under the payment notice);
+            // otherwise invoice date + client payment terms (default 30 days).
             const invDate = new Date();
             const invoiceDateStr = invDate.toISOString().slice(0, 10);
-            const dueDate = new Date(invDate);
-            dueDate.setDate(dueDate.getDate() + termsDays);
-            const dueDateStr = dueDate.toISOString().slice(0, 10);
+            let dueDateStr;
+            const certDue = app2.certificate_final_payment_date;
+            if (certDue) {
+                dueDateStr = (certDue instanceof Date ? certDue.toISOString() : String(certDue)).slice(0, 10);
+            } else {
+                const termsDays = Number(app2.client_payment_terms) > 0 ? Number(app2.client_payment_terms) : 30;
+                const dueDate = new Date(invDate);
+                dueDate.setDate(dueDate.getDate() + termsDays);
+                dueDateStr = dueDate.toISOString().slice(0, 10);
+            }
 
             // Single summary line item — "as per AFP / payment certificate",
             // fully editable while the invoice is still Draft.

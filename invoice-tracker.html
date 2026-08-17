@@ -1563,7 +1563,7 @@
            font-size:12px;margin-top:8px;background:var(--bg-darker);border:1px solid var(--border)"></div>
     </div>
 
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px">
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:12px">
       <div>
         <label class="field-label">Certificate Reference</label>
         <input type="text" class="field-input" id="afpCertRef" placeholder="e.g. PCERT-001">
@@ -1571,6 +1571,10 @@
       <div>
         <label class="field-label">Certificate Date</label>
         <input type="date" class="field-input" id="afpCertDate">
+      </div>
+      <div>
+        <label class="field-label" title="The notice's 'Final Date for payment' — becomes the invoice due date">Final Payment Date</label>
+        <input type="date" class="field-input" id="afpCertFinalDue">
       </div>
     </div>
 
@@ -1780,6 +1784,6 @@ function invHelpSection(sec) {
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
-<script src="shared.js?v=20260817"></script>
+<script src="shared.js?v=20260817b"></script>
 </body>
 </html>

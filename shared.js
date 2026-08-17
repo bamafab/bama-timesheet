@@ -41205,6 +41205,9 @@ function openCertUploadModal() {
   document.getElementById('afpCertOcrStatus').style.display = 'none';
   document.getElementById('afpCertRef').value = '';
   document.getElementById('afpCertDate').value = new Date().toISOString().slice(0, 10);
+  const _cfpd = document.getElementById('afpCertFinalDue');
+  if (_cfpd) _cfpd.value = _afpDetailCurrent.certificate_final_payment_date
+      ? String(_afpDetailCurrent.certificate_final_payment_date).slice(0, 10) : '';
   document.getElementById('afpCertNetVal').value = '';
   document.getElementById('afpCertVat').value = '';
   document.getElementById('afpCertRet').value = '';
@@ -41318,6 +41321,7 @@ async function onCertFilePicked(file) {
 {
   "certificate_ref": "their reference (contract/cert no) or null",
   "certificate_date": "YYYY-MM-DD or null",
+  "final_date_for_payment": "YYYY-MM-DD or null",
   "certified_value_net": 0,
   "certified_retention": 0,
   "certified_vat": 0,
@@ -41327,6 +41331,7 @@ async function onCertFilePicked(file) {
   ]
 }
 Header rules:
+- final_date_for_payment = the notice's "Final Date for payment" (the contractual date the payment falls due). null if not shown.
 - certified_value_net = the THIS-PERIOD certified net before retention. If the notice shows a "This Payment" column, use its pre-retention subtotal. If it only shows cumulative figures, use: cumulative gross valuation minus previously paid (pre-retention).
 - certified_retention = the THIS-PERIOD retention movement only (cumulative retention now minus cumulative retention at the previous certificate). NEVER use the cumulative retention figure shown on the notice as this-period retention.
 - certified_gross = the payment due this period (the notice's "Total amount due" — already net of retention). certified_vat = 0 unless VAT is explicitly shown.
@@ -41347,6 +41352,7 @@ ${linesDesc}`
 
     if (parsed.certificate_ref)         document.getElementById('afpCertRef').value    = parsed.certificate_ref;
     if (parsed.certificate_date)        document.getElementById('afpCertDate').value   = parsed.certificate_date;
+    if (parsed.final_date_for_payment)  { const el = document.getElementById('afpCertFinalDue'); if (el) el.value = parsed.final_date_for_payment; }
     if (parsed.certified_value_net != null) document.getElementById('afpCertNetVal').value = parsed.certified_value_net;
     if (parsed.certified_vat       != null) document.getElementById('afpCertVat').value    = parsed.certified_vat;
     if (parsed.certified_retention != null) document.getElementById('afpCertRet').value    = parsed.certified_retention;
@@ -41428,6 +41434,7 @@ async function uploadCertAndContinue() {
     await api.put(`/api/applications/${afp.id}/certificate`, {
       certificate_ref:      document.getElementById('afpCertRef').value || null,
       certificate_date:     document.getElementById('afpCertDate').value || null,
+      certificate_final_payment_date: document.getElementById('afpCertFinalDue')?.value || null,
       certified_value_net:  Number(document.getElementById('afpCertNetVal').value) || 0,
       certified_vat:        Number(document.getElementById('afpCertVat').value) || 0,
       certified_retention:  Number(document.getElementById('afpCertRet').value) || 0,

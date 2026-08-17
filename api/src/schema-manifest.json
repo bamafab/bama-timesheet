@@ -2,6 +2,19 @@
   "generated_from": "api/sql",
   "migrations": [
     {
+      "script": "add-afp-final-payment-date.sql",
+      "title": "Migration: add Applications.certificate_final_payment_date \u2014 the payment",
+      "kind": "structural",
+      "tables": [],
+      "columns": [
+        {
+          "table": "Applications",
+          "column": "certificate_final_payment_date"
+        }
+      ],
+      "seedForms": []
+    },
+    {
       "script": "add-afp-v2.sql",
       "title": "Builds on add-invoicing.sql + add-afps-extras.sql (already deployed). Adds:",
       "kind": "structural",
