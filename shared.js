@@ -41333,7 +41333,7 @@ async function onCertFilePicked(file) {
 Header rules:
 - final_date_for_payment = the notice's "Final Date for payment" (the contractual date the payment falls due). null if not shown.
 - certified_value_net = the THIS-PERIOD certified net before retention. If the notice shows a "This Payment" column, use its pre-retention subtotal. If it only shows cumulative figures, use: cumulative gross valuation minus previously paid (pre-retention).
-- certified_retention = the THIS-PERIOD retention movement only (cumulative retention now minus cumulative retention at the previous certificate). NEVER use the cumulative retention figure shown on the notice as this-period retention.
+- certified_retention = the CUMULATIVE retention held to date, exactly as shown on the notice's retention row (client notices state retention cumulatively). Only use a this-period retention figure if that is all the notice shows.
 - certified_gross = the payment due this period (the notice's "Total amount due" — already net of retention). certified_vat = 0 unless VAT is explicitly shown.
 Line rules:
 - certified_cumulative_value = the client's certified CUMULATIVE value-to-date for the line (in RG Carter style notices this is the "Current Value" under the Certification columns).
@@ -41533,7 +41533,7 @@ async function generateInvoiceFromAfp() {
   const confirmed = await showConfirmAsync(
     'Generate Invoice from AFP?',
     `<p>This will create a new Draft invoice based on the certified figures from <b>${escapeHtml(afp.ref)}</b>.</p>
-     <p>The invoice value will be the certified payment due of <b>£${(Math.round(((Number(afp.certified_gross) > 0 ? Number(afp.certified_gross) - Number(afp.certified_vat || 0) : Number(afp.certified_value_net || 0) - Number(afp.certified_retention || 0))) * 100) / 100).toFixed(2)}</b>. Retention of £${Number(afp.certified_retention || 0).toFixed(2)} stays held on the project — it is not deducted on the invoice. Review + Issue from the Sales Invoices tab afterwards.</p>`,
+     <p>The invoice value will be the certified payment due of <b>£${(Math.round(((Number(afp.certified_gross) > 0 ? Number(afp.certified_gross) - Number(afp.certified_vat || 0) : Number(afp.certified_value_net || 0) - Number(afp.certified_retention || 0))) * 100) / 100).toFixed(2)}</b>. Retention held on the project stands at £${Number(afp.certified_retention || 0).toFixed(2)} (cumulative) — it is not deducted on the invoice. Review + Issue from the Sales Invoices tab afterwards.</p>`,
     { okLabel: 'Generate', cancelLabel: 'Cancel' }
   );
   if (!confirmed) return;

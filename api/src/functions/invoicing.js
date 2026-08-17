@@ -819,13 +819,17 @@ app.http('applications-generate-invoice', {
             // applied equivalents. Retention itself is NOT deducted here —
             // the due figure is already net of it and retention is tracked on
             // the AFP/project, not the invoice.
+            // NOTE: certified_retention is stored CUMULATIVE (client notices
+            // state it that way), so net − retention is only a last-resort
+            // fallback — correct on a first valuation, understates on later
+            // ones. The gross-based paths are the reliable ones.
             const netAmount =
                 (app2.certified_gross != null && Number(app2.certified_gross) > 0)
                     ? r2(Number(app2.certified_gross) - Number(app2.certified_vat || 0))
-                : (app2.certified_value_net != null && Number(app2.certified_value_net) !== 0)
-                    ? r2(Number(app2.certified_value_net) - Number(app2.certified_retention || 0))
                 : (app2.applied_gross != null && Number(app2.applied_gross) > 0)
                     ? r2(Number(app2.applied_gross) - Number(app2.applied_vat || 0))
+                : (app2.certified_value_net != null && Number(app2.certified_value_net) !== 0)
+                    ? r2(Number(app2.certified_value_net) - Number(app2.certified_retention || 0))
                     : r2(Number(app2.applied_value_net || 0) - Number(app2.applied_retention || 0));
 
             // VAT position comes from the CLIENT's vat_treatment setting —

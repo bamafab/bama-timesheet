@@ -8,7 +8,8 @@
 //   contract   = Σ line items (qty × price) across attached quotes
 //   applied    = Σ applied_value_net   (AFPs, per-period values, not Draft/Cancelled)
 //   certified  = Σ certified_value_net (Certified + Invoiced AFPs)
-//   retention  = Σ certified_retention held on those AFPs
+//   retention  = certified_retention of the LATEST certified AFP (client
+//                notices state retention CUMULATIVELY, so latest = total held)
 //   invoiced   = Σ net_amount   (non-Void/Cancelled invoices on the project)
 //   paid       = Σ gross_amount − total_outstanding (same invoices)
 //   labour     = Σ hours × Employees.rate (S000 excluded)  [cost to date]
@@ -64,8 +65,12 @@ app.http('cvr-summary', {
                                     THEN a.applied_value_net ELSE 0 END)   AS applied,
                            SUM(CASE WHEN a.status IN ('Certified','Invoiced')
                                     THEN a.certified_value_net ELSE 0 END) AS certified,
-                           SUM(CASE WHEN a.status IN ('Certified','Invoiced')
-                                    THEN a.certified_retention ELSE 0 END) AS retention,
+                           (SELECT TOP 1 a2.certified_retention
+                              FROM Applications a2
+                             WHERE a2.project_id = p.id
+                               AND a2.status IN ('Certified','Invoiced')
+                               AND a2.certified_retention IS NOT NULL
+                             ORDER BY a2.application_no DESC) AS retention,
                            MAX(CASE WHEN a.status NOT IN ('Draft','Cancelled')
                                     THEN a.ref END) AS last_afp
                       FROM Applications a
