@@ -812,11 +812,18 @@
       <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:12px;align-items:end">
         <div style="grid-column:span 2">
           <label class="field-label">VAT Treatment</label>
-          <select class="field-input" id="invNewVatTreatment" onchange="recalcInvoiceTotals()">
-            <option value="reverse_charge">Domestic reverse charge (CIS) — no VAT billed</option>
-            <option value="standard">Standard VAT — 20% added</option>
-            <option value="zero">Zero / no VAT</option>
-          </select>
+          <div style="display:grid;grid-template-columns:1fr 88px;gap:8px">
+            <select class="field-input" id="invNewVatTreatment" onchange="recalcInvoiceTotals()">
+              <option value="reverse_charge">Domestic reverse charge (CIS) — no VAT billed</option>
+              <option value="standard">Standard VAT added</option>
+              <option value="zero">Zero / no VAT</option>
+            </select>
+            <select class="field-input" id="invNewVatRate" title="VAT rate — applies to standard VAT and the reverse charge notice figure" onchange="recalcInvoiceTotals()">
+              <option value="20">20%</option>
+              <option value="5">5%</option>
+              <option value="0">0%</option>
+            </select>
+          </div>
           <div id="invNewVatHint" style="font-size:11px;color:var(--muted);margin-top:4px;min-height:14px"></div>
         </div>
         <div>
@@ -1784,6 +1791,6 @@ function invHelpSection(sec) {
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
-<script src="shared.js?v=20260817c"></script>
+<script src="shared.js?v=20260817d"></script>
 </body>
 </html>

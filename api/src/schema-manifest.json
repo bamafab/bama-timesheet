@@ -305,6 +305,19 @@
       "seedForms": []
     },
     {
+      "script": "add-invoice-vat-rate.sql",
+      "title": "Migration: add Invoices.vat_rate (20 / 5 / 0). NULL = legacy 20%.",
+      "kind": "structural",
+      "tables": [],
+      "columns": [
+        {
+          "table": "Invoices",
+          "column": "vat_rate"
+        }
+      ],
+      "seedForms": []
+    },
+    {
       "script": "add-invoicing.sql",
       "title": "Invoice Tracker \u2014 Schema migration (Phase 1)",
       "kind": "structural",

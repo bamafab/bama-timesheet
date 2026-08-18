@@ -41628,6 +41628,7 @@ async function openNewInvoiceModal() {
   document.getElementById('invNewParentWrap').style.display = 'none';
   document.getElementById('invNewModalTitle').textContent = '🧾 New Invoice';
   document.getElementById('invNewVatTreatment').value = 'reverse_charge';
+  const _vr = document.getElementById('invNewVatRate'); if (_vr) _vr.value = '20';
   document.getElementById('invNewVatHint').textContent = '';
   document.getElementById('invNewRetentionMode').value = 'none';
   document.getElementById('invNewRetentionPct').value = '';
@@ -41864,6 +41865,14 @@ function _invToggleRetentionFields() {
   recalcInvoiceTotals();
 }
 
+// ── VAT rate (20 / 5 / 0) — applies to standard VAT and to the CIS
+// reverse-charge information figure. Missing element/value = legacy 20%.
+function _invVatRate() {
+  const el = document.getElementById('invNewVatRate');
+  const v = el ? Number(el.value) : 20;
+  return Number.isFinite(v) ? v : 20;
+}
+
 // ── Totals recalc ──
 function recalcInvoiceTotals() {
   // MUST match _invPayload()'s maths exactly, or the preview shows one total
@@ -41888,9 +41897,9 @@ function recalcInvoiceTotals() {
   // is still computed and shown for information, but as a "reverse
   // charge" figure rather than a billable VAT line.
   const vatBase = _r2(net - retention);
-  const standardVat = vatApplies ? pctOf(vatBase, 20) : 0;
+  const standardVat = vatApplies ? pctOf(vatBase, _invVatRate()) : 0;
   const vat = cisReverse ? 0 : standardVat;
-  const reverseCharge = cisReverse ? pctOf(vatBase, 20) : 0;
+  const reverseCharge = cisReverse ? pctOf(vatBase, _invVatRate()) : 0;
   const gross = _r2(net - retention + vat);
 
   document.getElementById('invTotalNet').textContent       = '£' + _invFmt2(net);
@@ -42018,9 +42027,9 @@ function _buildInvoicePayload() {
   const vatBase = _r2(net - retention);
   // CIS domestic reverse charge: VAT is shown for info as reverse charge,
   // but NOT added to the supplier's gross — customer accounts for it.
-  const standardVat = vatApplies ? pctOf(vatBase, 20) : 0;
+  const standardVat = vatApplies ? pctOf(vatBase, _invVatRate()) : 0;
   const vat = cisReverse ? 0 : standardVat;
-  const reverseCharge = cisReverse ? pctOf(vatBase, 20) : 0;
+  const reverseCharge = cisReverse ? pctOf(vatBase, _invVatRate()) : 0;
   const gross = _r2(net - retention + vat);
 
   return {
@@ -42035,6 +42044,7 @@ function _buildInvoicePayload() {
     is_retention_release: (_invEditing && _invEditing.is_retention_release) ? 1 : 0,
     vat_applies: vatApplies ? 1 : 0,
     cis_reverse_charge: cisReverse ? 1 : 0,
+    vat_rate: _invVatRate(),
     net_amount: _r2(net),
     vat_amount: vat,
     reverse_charge_amount: reverseCharge,
@@ -42131,6 +42141,7 @@ async function _buildInvoicePdfData(inv) {
     project: projectLabel,
     vatApplies: !!inv.vat_applies,
     cisReverse: !!inv.cis_reverse_charge,
+    vatRate: inv.vat_rate != null ? Number(inv.vat_rate) : 20,
     retention: Number(inv.retention_amount || 0),
     retentionDueDate: inv.retention_due_date,
     net: Number(inv.net_amount || 0),
@@ -42437,14 +42448,14 @@ function drawBamaInvoicePDF(jsPDF, d, logoDataUri) {
   // VAT line only shown when standard VAT is being charged. Under CIS
   // domestic reverse charge, no VAT is on the invoice — only the
   // notice line below ("customer to account for £X VAT to HMRC").
-  if (d.vatApplies && !d.cisReverse) drawTotal('VAT (20%)', d.vat);
+  if (d.vatApplies && !d.cisReverse) drawTotal(`VAT (${d.vatRate != null ? d.vatRate : 20}%)`, d.vat);
   if (d.cisReverse) {
     setText(MUTED); doc.setFont('helvetica', 'italic'); doc.setFontSize(9);
     doc.text('Domestic reverse charge: VAT Act 1994 Section 55A applies.', labelX, y);
     y += 4;
     doc.text(`Customer to account to HMRC for the reverse charge output tax`, labelX, y);
     y += 4;
-    doc.text(`of £${fmtNum(d.reverseCharge)} (VAT at 20%) on the above amount.`, labelX, y);
+    doc.text(`of £${fmtNum(d.reverseCharge)} (VAT at ${d.vatRate != null ? d.vatRate : 20}%) on the above amount.`, labelX, y);
     y += lineH;
   }
 
@@ -42614,6 +42625,8 @@ async function editInvoiceFromDetail() {
   // VAT treatment from stored flags
   document.getElementById('invNewVatTreatment').value =
     _invTreatmentFromFlags(!!inv.vat_applies, !!inv.cis_reverse_charge);
+  const _vrEl = document.getElementById('invNewVatRate');
+  if (_vrEl) _vrEl.value = String(inv.vat_rate != null ? Number(inv.vat_rate) : 20);
   document.getElementById('invNewVatHint').textContent =
     inv.source_afp_id && inv.afp_ref ? `Generated from ${inv.afp_ref} — line + VAT fully editable while Draft` : '';
 
