@@ -1579,6 +1579,9 @@
       </div>
       <input type="file" id="afpCertBdFile" accept="image/*,application/pdf,.xlsx,.xls" style="display:none"
              onchange="onCertBreakdownPicked(this.files[0])">
+      <button class="btn btn-primary" id="afpCertAnalyseBtn" disabled
+              style="width:100%;margin-top:8px" onclick="_runCertParse()"
+              title="Runs one AI pass over everything attached — stage both files first">🤖 Analyse</button>
       <div id="afpCertOcrStatus" style="display:none;padding:8px 10px;border-radius:6px;
            font-size:12px;margin-top:8px;background:var(--bg-darker);border:1px solid var(--border)"></div>
     </div>
@@ -1804,6 +1807,6 @@ function invHelpSection(sec) {
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
-<script src="shared.js?v=20260818e"></script>
+<script src="shared.js?v=20260818f"></script>
 </body>
 </html>

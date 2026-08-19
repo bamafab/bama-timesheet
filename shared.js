@@ -41287,7 +41287,7 @@ function renderAfpCertLineFields() {
       <div style="text-align:right;color:var(--muted)" title="Our applied cumulative">£${fmt(appliedCum)}</div>
       <div style="text-align:right;color:var(--subtle)" title="Previously paid">£${fmt(prevPaid)}</div>
       <input type="number" step="0.01" class="field-input" placeholder="Cert cum £"
-             data-line-id="${l.id}" data-line-idx="${i}" data-applied-cum="${appliedCum.toFixed(2)}"
+             data-line-id="${l.id}" data-line-idx="${i}" data-applied-cum="${appliedCum.toFixed(2)}" data-prev-paid="${prevPaid.toFixed(2)}"
              style="font-size:12px;padding:4px 6px;text-align:right">
     </div>`;
   }).join('');
@@ -41336,24 +41336,40 @@ async function _certFileToBlocks(file, roleLabel) {
   return blocks;
 }
 
-async function onCertFilePicked(file) {
+// Pickers only STAGE the file(s) — the parse runs once, on the Analyse
+// button (quote-helper pattern), so attaching notice + breakdown costs one
+// API call instead of two.
+function _certUpdateAnalyseBtn() {
+  const btn = document.getElementById('afpCertAnalyseBtn');
+  if (btn) btn.disabled = !(_afpCertFile || _afpCertBdFile);
+  const statusEl = document.getElementById('afpCertOcrStatus');
+  if (statusEl && (_afpCertFile || _afpCertBdFile)) {
+    statusEl.style.display = '';
+    statusEl.style.background = 'var(--bg-darker)';
+    statusEl.innerHTML = `📎 Staged: ${[_afpCertFile, _afpCertBdFile].filter(Boolean).map(f => `<b>${escapeHtml(f.name)}</b>`).join(' + ')} — attach ${_afpCertBdFile ? '' : 'the QS breakdown too if you have one, then '}click <b>🤖 Analyse</b>.`;
+  }
+}
+
+function onCertFilePicked(file) {
   if (!file || !_afpDetailCurrent) return;
   _afpCertFile = file;
   const dropLabel = document.getElementById('afpCertDropLabel');
   if (dropLabel) dropLabel.innerHTML = `📎 <b>${escapeHtml(file.name)}</b> <span style="font-size:11px;color:var(--subtle)">(drop or click to replace)</span>`;
-  await _runCertParse();
+  _certUpdateAnalyseBtn();
 }
 
-async function onCertBreakdownPicked(file) {
+function onCertBreakdownPicked(file) {
   if (!file || !_afpDetailCurrent) return;
   _afpCertBdFile = file;
   const lbl = document.getElementById('afpCertBdDropLabel');
   if (lbl) lbl.innerHTML = `📎 <b>${escapeHtml(file.name)}</b> <span style="font-size:11px;color:var(--subtle)">(drop or click to replace)</span>`;
-  await _runCertParse();
+  _certUpdateAnalyseBtn();
 }
 
 async function _runCertParse() {
   if (!_afpCertFile && !_afpCertBdFile) return;
+  const analyseBtn = document.getElementById('afpCertAnalyseBtn');
+  if (analyseBtn) { analyseBtn.disabled = true; analyseBtn.textContent = 'Analysing…'; }
   const statusEl = document.getElementById('afpCertOcrStatus');
   statusEl.style.display = '';
   statusEl.style.background = 'var(--bg-darker)';
@@ -41408,8 +41424,8 @@ Header rules:
 Line rules:
 - Some notices are SUMMARY-ONLY (e.g. RG Carter S3 single page: Gross Valuation / Less Retention / Less Previously Paid / Payment Due, breakdown "as attached" but not present). For those return "line_items": [].
 - When a per-line certification schedule IS included, certified_cumulative_value = the client's certified CUMULATIVE value-to-date for the line (in RG Carter breakdown pages this is the "Current Value" under the Certification columns, NOT the Application columns).
-- Use "line_items" ONLY where a document explicitly prints a certified value for that exact individual line/item of ours (a per-line certification schedule, or a breakdown that prints values per item/area). Copy the printed value verbatim — NEVER cap it at, or adjust it toward, our applied figure; QSs certify above or below what we applied, report what is printed. A printed blank/dash/0 against an item they list IS a printed value of 0.
-- If the breakdown only shows a coarse lump spanning several of our lines with no per-line values (e.g. "Contract sum" as one figure), SKIP those lines entirely — do NOT estimate, split, or spread the lump. The user fills them.
+- When a per-line certification schedule or breakdown IS included (in either document), match its rows to our application lines below by description and order, and fill certified_cumulative_value with the printed value VERBATIM. Never cap a value at, or adjust it toward, our applied figure — QSs certify above or below what we applied; report exactly what is printed. A printed blank/dash/0 against an item they list IS a certified value of 0.
+- A single figure covering MANY of our lines with no per-row values (e.g. one "Contract sum" number): leave those lines out — never estimate or split a total across lines.
 - Header totals ALWAYS come from the payment notice when one is provided, never from the supplementary breakdown.
 - Match against our application lines below by description and order. Only include lines you can match confidently; skip headers/subtotals.
 - Keep each line_items entry on one line, no extra whitespace.
@@ -41462,7 +41478,22 @@ ${linesDesc}`
         const inp = document.querySelector(`#afpCertLineFields input[data-line-idx="${item.line_index - 1}"]`);
         if (inp && item.certified_cumulative_value != null) { inp.value = item.certified_cumulative_value; matched++; }
       });
-    } else {
+    }
+    // ── Carry previously-paid lines — DETERMINISTIC ──
+    // Lines with no new claim this period (applied cum == previously paid)
+    // that the documents didn't mention: absent any payless indication the
+    // paid position simply carries, so fill them at that value. Creates no
+    // deviation flags; anything the QS DID print wins above.
+    let carried = 0;
+    document.querySelectorAll('#afpCertLineFields input').forEach(inp => {
+      if (String(inp.value).trim() !== '') return;
+      const appliedCum = Number(inp.dataset.appliedCum), prevPaid = Number(inp.dataset.prevPaid);
+      if (prevPaid > 0 && Math.abs(appliedCum - prevPaid) <= 0.01) {
+        inp.value = prevPaid.toFixed(2);
+        carried++;
+      }
+    });
+    if (!(Array.isArray(parsed.line_items) && parsed.line_items.length)) {
       // Summary-only notice — no per-line certification. If the notice's
       // cumulative gross valuation reconciles with our applied cumulative
       // total, the QS certified the application as applied: fill every line
@@ -41472,7 +41503,7 @@ ${linesDesc}`
       const appliedTotal = _r2c(lineInputs.reduce((s, inp) => s + (Number(inp.dataset.appliedCum) || 0), 0));
       const noticeCum = _r2c(parsed.notice_gross_valuation_cum);
       if (noticeCum > 0 && Math.abs(noticeCum - appliedTotal) <= 0.05) {
-        lineInputs.forEach(inp => { inp.value = _r2c(inp.dataset.appliedCum); matched++; });
+        lineInputs.forEach(inp => { if (String(inp.value).trim() === '') { inp.value = _r2c(inp.dataset.appliedCum); matched++; } });
         summaryFilled = true;
       } else if (noticeCum > 0) {
         summaryMismatch = _r2c(noticeCum - appliedTotal);
@@ -41499,6 +41530,7 @@ ${linesDesc}`
     const extras = [];
     if (netDerived)     extras.push('this-period net derived from payment due + retention movement');
     if (summaryFilled)  extras.push('summary-only notice — gross valuation matches your application, lines certified in full at applied values');
+    if (carried)        extras.push(`${carried} previously-paid line${carried > 1 ? 's' : ''} with no new claim carried at the paid value`);
     if (overCert)       extras.push(`<b style="color:var(--orange, #f5a623)">${overCert} line${overCert > 1 ? 's' : ''} certified ABOVE applied</b> (amber) — on confirm, the next AFP will start ${overCert > 1 ? 'those lines' : 'that line'} at the certified level so you don't re-apply for value already paid`);
     const extraTxt = extras.length ? ` <i>(${extras.join('; ')})</i>` : '';
     if (summaryMismatch !== 0 && !summaryFilled && matched === 0) {
@@ -41514,6 +41546,8 @@ ${linesDesc}`
     console.error('Cert OCR failed', err);
     statusEl.style.background = 'rgba(255,165,0,.1)';
     statusEl.innerHTML = `⚠ Could not parse automatically — fill the figures manually below, or click <b>✓ Certify in full</b> and adjust. (${escapeHtml(err.message || 'unknown')})`;
+  } finally {
+    if (analyseBtn) { analyseBtn.disabled = false; analyseBtn.textContent = '🤖 Analyse'; }
   }
 }
 
