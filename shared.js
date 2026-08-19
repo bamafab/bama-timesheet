@@ -40049,6 +40049,7 @@ let _afpModalProjectId = null;     // project locked for the modal
 let _afpLineRows = [];             // working SOV rows in the modal
 let _afpDetailCurrent = null;      // currently-open AFP in the detail modal
 let _afpCertFile = null;           // raw File for the cert upload
+let _afpCertBdFile = null;         // optional QS breakdown / account summary (xlsx, pdf, image)
 let _afpCertParsed = null;         // OCR result staged
 let _afpImportMeta = null;         // { application_no } when SOV came from an AFP import
 
@@ -41200,8 +41201,13 @@ async function downloadAfpPdf() {
 function openCertUploadModal() {
   if (!_afpDetailCurrent) return;
   _afpCertFile = null;
+  _afpCertBdFile = null;
   _afpCertParsed = null;
   document.getElementById('afpCertFile').value = '';
+  const _bdIn = document.getElementById('afpCertBdFile');
+  if (_bdIn) _bdIn.value = '';
+  const _bdLbl = document.getElementById('afpCertBdDropLabel');
+  if (_bdLbl) _bdLbl.innerHTML = _afpCertBdLabelDefault();
   document.getElementById('afpCertOcrStatus').style.display = 'none';
   document.getElementById('afpCertRef').value = '';
   document.getElementById('afpCertDate').value = new Date().toISOString().slice(0, 10);
@@ -41285,19 +41291,62 @@ function certifyAfpInFull() {
   toast('Copied applied figures — adjust any line they paid less on', 'info');
 }
 
+function _afpCertBdLabelDefault() {
+  return `➕ <b>QS breakdown / account summary</b> (optional) — Excel, PDF or image<br>
+  <span style="font-size:11px;color:var(--subtle)">For summary-only notices: their breakdown certifies the per-line values</span>`;
+}
+
+// Turn a picked file into content block(s) for the AI call.
+// xlsx/xls → all sheets as CSV text (SheetJS, same as the AFP importer);
+// image → image block; anything else → document block (pdf).
+async function _certFileToBlocks(file, roleLabel) {
+  const name = (file.name || '').toLowerCase();
+  if (name.endsWith('.xlsx') || name.endsWith('.xls')) {
+    const buf = await file.arrayBuffer();
+    const wb = XLSX.read(buf, { type: 'array' });
+    let csv = wb.SheetNames
+      .map(n => `--- sheet: ${n} ---\n` + XLSX.utils.sheet_to_csv(wb.Sheets[n], { blankrows: false }))
+      .join('\n\n');
+    if (csv.length > 60000) csv = csv.slice(0, 60000) + '\n…(truncated)';
+    return [{ type: 'text', text: `${roleLabel} (converted from Excel "${file.name}"):\n${csv}` }];
+  }
+  const dataUri = await _fileToDataUri(file);
+  const data = dataUri.split(',')[1];
+  const blocks = [{ type: 'text', text: `${roleLabel} ("${file.name}") follows:` }];
+  blocks.push(file.type.startsWith('image/')
+    ? { type: 'image',    source: { type: 'base64', media_type: file.type, data } }
+    : { type: 'document', source: { type: 'base64', media_type: file.type || 'application/pdf', data } });
+  return blocks;
+}
+
 async function onCertFilePicked(file) {
   if (!file || !_afpDetailCurrent) return;
   _afpCertFile = file;
   const dropLabel = document.getElementById('afpCertDropLabel');
   if (dropLabel) dropLabel.innerHTML = `📎 <b>${escapeHtml(file.name)}</b> <span style="font-size:11px;color:var(--subtle)">(drop or click to replace)</span>`;
+  await _runCertParse();
+}
+
+async function onCertBreakdownPicked(file) {
+  if (!file || !_afpDetailCurrent) return;
+  _afpCertBdFile = file;
+  const lbl = document.getElementById('afpCertBdDropLabel');
+  if (lbl) lbl.innerHTML = `📎 <b>${escapeHtml(file.name)}</b> <span style="font-size:11px;color:var(--subtle)">(drop or click to replace)</span>`;
+  await _runCertParse();
+}
+
+async function _runCertParse() {
+  if (!_afpCertFile && !_afpCertBdFile) return;
   const statusEl = document.getElementById('afpCertOcrStatus');
   statusEl.style.display = '';
   statusEl.style.background = 'var(--bg-darker)';
-  statusEl.innerHTML = '<div class="spinner" style="display:inline-block;width:14px;height:14px;vertical-align:middle"></div> Parsing payment notice with AI…';
+  statusEl.innerHTML = '<div class="spinner" style="display:inline-block;width:14px;height:14px;vertical-align:middle"></div> Parsing ' +
+    (_afpCertFile && _afpCertBdFile ? 'payment notice + QS breakdown' : _afpCertBdFile ? 'QS breakdown' : 'payment notice') + ' with AI…';
 
   try {
-    const dataUri = await _fileToDataUri(file);
-    const isImg = file.type.startsWith('image/');
+    const docBlocks = [];
+    if (_afpCertFile)   docBlocks.push(...await _certFileToBlocks(_afpCertFile, 'PAYMENT NOTICE / CERTIFICATE'));
+    if (_afpCertBdFile) docBlocks.push(...await _certFileToBlocks(_afpCertBdFile, 'SUPPLEMENTARY QS BREAKDOWN / ACCOUNT SUMMARY'));
     const linesDesc = (_afpDetailCurrent.line_items || [])
       .map((l, i) => {
         const appliedCum = l.cumulative_value != null
@@ -41312,9 +41361,7 @@ async function onCertFilePicked(file) {
       messages: [{
         role: 'user',
         content: [
-          isImg
-            ? { type: 'image',    source: { type: 'base64', media_type: file.type, data: dataUri.split(',')[1] } }
-            : { type: 'document', source: { type: 'base64', media_type: file.type, data: dataUri.split(',')[1] } },
+          ...docBlocks,
           {
             type: 'text',
             text: `Extract from this UK construction payment / payless notice or certificate. Return ONLY compact JSON, no markdown:
@@ -41344,6 +41391,8 @@ Header rules:
 Line rules:
 - Some notices are SUMMARY-ONLY (e.g. RG Carter S3 single page: Gross Valuation / Less Retention / Less Previously Paid / Payment Due, breakdown "as attached" but not present). For those return "line_items": [].
 - When a per-line certification schedule IS included, certified_cumulative_value = the client's certified CUMULATIVE value-to-date for the line (in RG Carter breakdown pages this is the "Current Value" under the Certification columns, NOT the Application columns).
+- If a SUPPLEMENTARY QS BREAKDOWN / ACCOUNT SUMMARY is provided, use it for per-line certification. It is usually COARSER than our lines: a lump like "Contract sum" certified at its full value means every measured/contract-works line is certified in full — use each line's applied cum figure from the list below. Named lumps (e.g. "Handrails to plant base", "Box frame to class room") match our variation/item lines by description — certify those at the lump's printed value (split across our matching cost-element lines pro-rata to their applied cum only when one lump clearly spans several of our lines; otherwise skip).
+- Header totals ALWAYS come from the payment notice when one is provided, never from the supplementary breakdown.
 - Match against our application lines below by description and order. Only include lines you can match confidently; skip headers/subtotals.
 - Keep each line_items entry on one line, no extra whitespace.
 
@@ -41465,6 +41514,15 @@ async function uploadCertAndContinue() {
             sharepoint_url: driveItem.webUrl,
             filename:       fileName
           });
+          if (_afpCertBdFile) {
+            try {
+              const bdExt = (_afpCertBdFile.name.split('.').pop() || 'xlsx').toLowerCase();
+              const bdName = sanitizeSpFilename(`${afp.ref}-Certificate-Breakdown.${bdExt}`);
+              await uploadFileToFolder(afpFolder.id, bdName, _afpCertBdFile, _afpCertBdFile.type || 'application/octet-stream');
+            } catch (bdErr) {
+              console.warn('Breakdown SharePoint upload failed (cert itself saved):', bdErr);
+            }
+          }
         } catch (spErr) {
           console.warn('Cert SharePoint upload failed — certifying without the file:', spErr);
           toast('Certificate file could not be saved to SharePoint — certifying on the entered figures anyway', 'warning');
