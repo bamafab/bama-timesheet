@@ -41394,6 +41394,9 @@ async function _runCertParse() {
   "certified_value_net": null,
   "line_items": [
     { "line_index": 1, "certified_cumulative_value": 0 }
+  ],
+  "breakdown_lumps": [
+    { "description": "lump text as printed", "certified_value": 0, "line_indices": [1, 2] }
   ]
 }
 CRITICAL: extract ONLY figures printed on the document. NEVER calculate, derive, or combine figures — any value not explicitly printed stays null/0.
@@ -41408,7 +41411,8 @@ Header rules:
 Line rules:
 - Some notices are SUMMARY-ONLY (e.g. RG Carter S3 single page: Gross Valuation / Less Retention / Less Previously Paid / Payment Due, breakdown "as attached" but not present). For those return "line_items": [].
 - When a per-line certification schedule IS included, certified_cumulative_value = the client's certified CUMULATIVE value-to-date for the line (in RG Carter breakdown pages this is the "Current Value" under the Certification columns, NOT the Application columns).
-- If a SUPPLEMENTARY QS BREAKDOWN / ACCOUNT SUMMARY is provided, use it for per-line certification. It is usually COARSER than our lines: a lump like "Contract sum" certified at its full value means every measured/contract-works line is certified in full — use each line's applied cum figure from the list below. Named lumps (e.g. "Handrails to plant base", "Box frame to class room") match our variation/item lines by description — certify those at the lump's printed value (split across our matching cost-element lines pro-rata to their applied cum only when one lump clearly spans several of our lines; otherwise skip).
+- Use "line_items" ONLY where a document explicitly prints a certified value for that exact individual line of ours. Copy the printed value verbatim — NEVER cap it at, or adjust it toward, our applied figure. QSs certify above or below what we applied; report what is printed.
+- A SUPPLEMENTARY QS BREAKDOWN / ACCOUNT SUMMARY is usually COARSER than our lines (lumps like "Contract sum", "Handrails to plant base", "Box frame to class room"). For each certified lump, return a "breakdown_lumps" entry: the lump's printed certified value and the line_indices of ALL our lines it covers (matched by description/section — e.g. a "Contract sum" lump covers every measured-works line; a named variation lump covers that item's cost-element lines). Do NOT split, scale, or distribute lump values yourself — our system does that arithmetic. Do NOT also emit line_items for lines covered by a lump.
 - Header totals ALWAYS come from the payment notice when one is provided, never from the supplementary breakdown.
 - Match against our application lines below by description and order. Only include lines you can match confidently; skip headers/subtotals.
 - Keep each line_items entry on one line, no extra whitespace.
@@ -41456,12 +41460,43 @@ ${linesDesc}`
 
     let matched = 0;
     let summaryFilled = false, summaryMismatch = 0;
+    let lumpsFilled = 0;
     if (Array.isArray(parsed.line_items) && parsed.line_items.length) {
       parsed.line_items.forEach(item => {
         const inp = document.querySelector(`#afpCertLineFields input[data-line-idx="${item.line_index - 1}"]`);
         if (inp && item.certified_cumulative_value != null) { inp.value = item.certified_cumulative_value; matched++; }
       });
-    } else {
+    }
+    // ── Lump distribution — DETERMINISTIC ──
+    // The AI matches each QS lump to our lines and lifts its printed value;
+    // splitting is done here, pro-rata to CONTRACT VALUE (never to applied —
+    // a lump worth the group's full contract value must land every line at
+    // 100% even where we only applied 15%). Rounding remainder goes on the
+    // last line so the lines always sum exactly to the lump.
+    if (Array.isArray(parsed.breakdown_lumps)) {
+      parsed.breakdown_lumps.forEach(lump => {
+        if (lump == null || lump.certified_value == null || !Array.isArray(lump.line_indices)) return;
+        const inputs = lump.line_indices
+          .map(n => document.querySelector(`#afpCertLineFields input[data-line-idx="${n - 1}"]`))
+          .filter(inp => inp && String(inp.value).trim() === '');
+        if (!inputs.length) return;
+        const total = _r2c(lump.certified_value);
+        const cvs = inputs.map(inp => Number((_afpDetailCurrent.line_items[Number(inp.dataset.lineIdx)] || {}).contract_value || 0));
+        const cvSum = cvs.reduce((s, v) => s + v, 0);
+        let allocated = 0;
+        inputs.forEach((inp, i) => {
+          let share;
+          if (i === inputs.length - 1) share = _r2c(total - allocated);
+          else {
+            share = cvSum > 0 ? _r2c(total * cvs[i] / cvSum) : _r2c(total / inputs.length);
+            allocated = _r2c(allocated + share);
+          }
+          inp.value = share;
+          matched++; lumpsFilled++;
+        });
+      });
+    }
+    if (!(Array.isArray(parsed.line_items) && parsed.line_items.length) && !lumpsFilled) {
       // Summary-only notice — no per-line certification. If the notice's
       // cumulative gross valuation reconciles with our applied cumulative
       // total, the QS certified the application as applied: fill every line
@@ -41498,6 +41533,7 @@ ${linesDesc}`
     const extras = [];
     if (netDerived)     extras.push('this-period net derived from payment due + retention movement');
     if (summaryFilled)  extras.push('summary-only notice — gross valuation matches your application, lines certified in full at applied values');
+    if (lumpsFilled)    extras.push(`${lumpsFilled} line${lumpsFilled > 1 ? 's' : ''} filled from QS breakdown lumps, split pro-rata to contract value`);
     if (overCert)       extras.push(`<b style="color:var(--orange, #f5a623)">${overCert} line${overCert > 1 ? 's' : ''} certified ABOVE applied</b> (amber) — on confirm, the next AFP will start ${overCert > 1 ? 'those lines' : 'that line'} at the certified level so you don't re-apply for value already paid`);
     const extraTxt = extras.length ? ` <i>(${extras.join('; ')})</i>` : '';
     if (summaryMismatch !== 0 && !summaryFilled && matched === 0) {
