@@ -40242,10 +40242,23 @@ async function _afpPopulateSov(projectId) {
     // ── AFP02+ — copy most-recent AFP's SOV, carry prev % / paid from last
     //    CERTIFIED, then auto-pull newly attached quotes as fresh Variations.
     const prevAfp = projectAfps[0];
+    const liftedLines = [];
     try {
       const detail = await api.get(`/api/applications/${prevAfp.id}`);
       _afpLineRows = (detail.line_items || []).map(l => {
         const cert = findCertLine(l.source_quote_line_item_id, l.description);
+        const cv = Number(l.contract_value || 0);
+        const paid = cert ? Number(cert.gross_amount_paid || 0) : Number(l.gross_amount_paid || 0);
+        let prevPct = cert ? Number(cert.this_app_pct_complete || 0) : Number(l.previous_pct_complete || 0);
+        // QS certified ABOVE what we applied (paid-to-date > cum applied):
+        // lift the line's starting % to the certified level — the value has
+        // been paid, so the next application must never claim it again.
+        // (Payless — paid BELOW applied — deliberately keeps our applied %,
+        // so the shortfall stays claimed on the next AFP.)
+        if (cv > 0 && paid - (cv * prevPct / 100) > 0.01) {
+          prevPct = Math.round((paid / cv) * 10000) / 100;
+          liftedLines.push(l.description);
+        }
         return {
           section: l.section || 'measured',
           item_no: l.item_no != null ? Number(l.item_no) : 1,
@@ -40254,13 +40267,17 @@ async function _afpPopulateSov(projectId) {
           item_wo_no: l.item_wo_no || '',
           source_quote_line_item_id: l.source_quote_line_item_id,
           description: l.description,
-          contract_value: Number(l.contract_value || 0),
-          previous_pct_complete: cert ? Number(cert.this_app_pct_complete || 0) : Number(l.previous_pct_complete || 0),
-          this_app_pct_complete: Number(l.this_app_pct_complete || 0),
-          gross_amount_paid: cert ? Number(cert.gross_amount_paid || 0) : Number(l.gross_amount_paid || 0)
+          contract_value: cv,
+          previous_pct_complete: prevPct,
+          this_app_pct_complete: Math.max(Number(l.this_app_pct_complete || 0), prevPct),
+          gross_amount_paid: paid
         };
       });
     } catch (e) { _afpLineRows = []; }
+    if (liftedLines.length) {
+      const shown = liftedLines.slice(0, 3).join(', ');
+      toast(`${liftedLines.length} line${liftedLines.length > 1 ? 's' : ''} certified above your last application — starting % lifted to the paid level: ${shown}${liftedLines.length > 3 ? ` +${liftedLines.length - 3} more` : ''}`, 'warning');
+    }
 
     // VO auto-pull: any project quote whose reference isn't in the SOV yet
     const knownRefs = new Set(_afpLineRows.map(l => (l.item_quote_ref || '').trim()).filter(Boolean));
@@ -41460,13 +41477,20 @@ ${linesDesc}`
         summaryMismatch = _r2c(noticeCum - appliedTotal);
       }
     }
-    // Flag payless lines: certified cum < applied cum
-    let payless = 0;
+    // Flag deviations from the application, both directions:
+    //   red   = payless (certified BELOW applied) — chase or re-apply
+    //   amber = certified ABOVE applied — QS paid more than we asked for;
+    //           the next AFP starts those lines at the certified level so
+    //           we never apply for that value again.
+    let payless = 0, overCert = 0;
     document.querySelectorAll('#afpCertLineFields input').forEach(inp => {
       const cert = parseFloat(inp.value), applied = parseFloat(inp.dataset.appliedCum);
       if (!isNaN(cert) && !isNaN(applied) && applied - cert > 0.01) {
         inp.style.borderColor = 'var(--red)'; inp.style.color = 'var(--red)';
         payless++;
+      } else if (!isNaN(cert) && !isNaN(applied) && cert - applied > 0.01) {
+        inp.style.borderColor = 'var(--orange, #f5a623)'; inp.style.color = 'var(--orange, #f5a623)';
+        overCert++;
       } else {
         inp.style.borderColor = ''; inp.style.color = '';
       }
@@ -41474,6 +41498,7 @@ ${linesDesc}`
     const extras = [];
     if (netDerived)     extras.push('this-period net derived from payment due + retention movement');
     if (summaryFilled)  extras.push('summary-only notice — gross valuation matches your application, lines certified in full at applied values');
+    if (overCert)       extras.push(`<b style="color:var(--orange, #f5a623)">${overCert} line${overCert > 1 ? 's' : ''} certified ABOVE applied</b> (amber) — on confirm, the next AFP will start ${overCert > 1 ? 'those lines' : 'that line'} at the certified level so you don't re-apply for value already paid`);
     const extraTxt = extras.length ? ` <i>(${extras.join('; ')})</i>` : '';
     if (summaryMismatch !== 0 && !summaryFilled && matched === 0) {
       statusEl.style.background = 'rgba(255,165,0,.12)';
