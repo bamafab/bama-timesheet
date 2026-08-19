@@ -41319,24 +41319,31 @@ async function onCertFilePicked(file) {
             type: 'text',
             text: `Extract from this UK construction payment / payless notice or certificate. Return ONLY compact JSON, no markdown:
 {
-  "certificate_ref": "their reference (contract/cert no) or null",
+  "certificate_ref": "their reference (sub-contract/contract/cert no) or null",
   "certificate_date": "YYYY-MM-DD or null",
   "final_date_for_payment": "YYYY-MM-DD or null",
-  "certified_value_net": 0,
+  "notice_gross_valuation_cum": 0,
+  "notice_previously_paid": 0,
   "certified_retention": 0,
   "certified_vat": 0,
   "certified_gross": 0,
+  "certified_value_net": null,
   "line_items": [
     { "line_index": 1, "certified_cumulative_value": 0 }
   ]
 }
+CRITICAL: extract ONLY figures printed on the document. NEVER calculate, derive, or combine figures — any value not explicitly printed stays null/0.
 Header rules:
+- certificate_date = the payment notice date (not the application date).
 - final_date_for_payment = the notice's "Final Date for payment" (the contractual date the payment falls due). null if not shown.
-- certified_value_net = the THIS-PERIOD certified net before retention. If the notice shows a "This Payment" column, use its pre-retention subtotal. If it only shows cumulative figures, use: cumulative gross valuation minus previously paid (pre-retention).
-- certified_retention = the CUMULATIVE retention held to date, exactly as shown on the notice's retention row (client notices state retention cumulatively). Only use a this-period retention figure if that is all the notice shows.
-- certified_gross = the payment due this period (the notice's "Total amount due" — already net of retention). certified_vat = 0 unless VAT is explicitly shown.
+- notice_gross_valuation_cum = the "Gross Valuation" (cumulative value of works before retention). 0 if not shown.
+- notice_previously_paid = the "Less Previously Paid" / "Less Previously Certified" figure as printed. 0 if not shown.
+- certified_retention = the retention row exactly as printed (client notices state retention cumulatively).
+- certified_gross = the "Payment Due" / "Total amount due" this period (already net of retention). certified_vat = 0 unless VAT is explicitly shown.
+- certified_value_net = ONLY if the notice explicitly prints a THIS-PERIOD pre-retention subtotal (e.g. a "This Payment" column). Otherwise null — do NOT compute it from other figures.
 Line rules:
-- certified_cumulative_value = the client's certified CUMULATIVE value-to-date for the line (in RG Carter style notices this is the "Current Value" under the Certification columns).
+- Some notices are SUMMARY-ONLY (e.g. RG Carter S3 single page: Gross Valuation / Less Retention / Less Previously Paid / Payment Due, breakdown "as attached" but not present). For those return "line_items": [].
+- When a per-line certification schedule IS included, certified_cumulative_value = the client's certified CUMULATIVE value-to-date for the line (in RG Carter breakdown pages this is the "Current Value" under the Certification columns, NOT the Application columns).
 - Match against our application lines below by description and order. Only include lines you can match confidently; skip headers/subtotals.
 - Keep each line_items entry on one line, no extra whitespace.
 
@@ -41353,17 +41360,56 @@ ${linesDesc}`
     if (parsed.certificate_ref)         document.getElementById('afpCertRef').value    = parsed.certificate_ref;
     if (parsed.certificate_date)        document.getElementById('afpCertDate').value   = parsed.certificate_date;
     if (parsed.final_date_for_payment)  { const el = document.getElementById('afpCertFinalDue'); if (el) el.value = parsed.final_date_for_payment; }
-    if (parsed.certified_value_net != null) document.getElementById('afpCertNetVal').value = parsed.certified_value_net;
     if (parsed.certified_vat       != null) document.getElementById('afpCertVat').value    = parsed.certified_vat;
     if (parsed.certified_retention != null) document.getElementById('afpCertRet').value    = parsed.certified_retention;
     if (parsed.certified_gross     != null) document.getElementById('afpCertGross').value  = parsed.certified_gross;
 
+    // ── This-period certified net (pre-retention) — DETERMINISTIC ──
+    // The AI only lifts printed figures; the arithmetic lives here (two-engine
+    // rule). Summary notices (RG Carter S3 etc) never print a this-period
+    // pre-retention net, so derive it:
+    //   net = payment due + retention movement
+    //   retention movement = cumulative retention now − cumulative retention
+    //                        at our previous certified AFP for this project.
+    const _r2c = v => Math.round((Number(v) || 0) * 100) / 100;
+    let netDerived = false;
+    if (parsed.certified_value_net != null && Number(parsed.certified_value_net) !== 0) {
+      document.getElementById('afpCertNetVal').value = parsed.certified_value_net;
+    } else if (parsed.certified_gross != null && Number(parsed.certified_gross) !== 0) {
+      const prevRetCum = (_invAfpList || [])
+        .filter(a => a.project_id === _afpDetailCurrent.project_id
+                  && a.id !== _afpDetailCurrent.id
+                  && ['Certified', 'Invoiced', 'Paid'].includes(a.status)
+                  && Number(a.application_no || 0) < Number(_afpDetailCurrent.application_no || 0))
+        .sort((a, b) => Number(b.application_no || 0) - Number(a.application_no || 0))
+        .map(a => Number(a.certified_retention || 0))[0] || 0;
+      const retMove = _r2c(Number(parsed.certified_retention || 0) - prevRetCum);
+      document.getElementById('afpCertNetVal').value = _r2c(Number(parsed.certified_gross) + retMove);
+      netDerived = true;
+    }
+
     let matched = 0;
-    if (Array.isArray(parsed.line_items)) {
+    let summaryFilled = false, summaryMismatch = 0;
+    if (Array.isArray(parsed.line_items) && parsed.line_items.length) {
       parsed.line_items.forEach(item => {
         const inp = document.querySelector(`#afpCertLineFields input[data-line-idx="${item.line_index - 1}"]`);
         if (inp && item.certified_cumulative_value != null) { inp.value = item.certified_cumulative_value; matched++; }
       });
+    } else {
+      // Summary-only notice — no per-line certification. If the notice's
+      // cumulative gross valuation reconciles with our applied cumulative
+      // total, the QS certified the application as applied: fill every line
+      // at its applied cumulative value. If it does NOT reconcile, leave the
+      // lines alone and tell the user by how much — never guess a spread.
+      const lineInputs = [...document.querySelectorAll('#afpCertLineFields input')];
+      const appliedTotal = _r2c(lineInputs.reduce((s, inp) => s + (Number(inp.dataset.appliedCum) || 0), 0));
+      const noticeCum = _r2c(parsed.notice_gross_valuation_cum);
+      if (noticeCum > 0 && Math.abs(noticeCum - appliedTotal) <= 0.05) {
+        lineInputs.forEach(inp => { inp.value = _r2c(inp.dataset.appliedCum); matched++; });
+        summaryFilled = true;
+      } else if (noticeCum > 0) {
+        summaryMismatch = _r2c(noticeCum - appliedTotal);
+      }
     }
     // Flag payless lines: certified cum < applied cum
     let payless = 0;
@@ -41376,10 +41422,19 @@ ${linesDesc}`
         inp.style.borderColor = ''; inp.style.color = '';
       }
     });
-    statusEl.style.background = payless ? 'rgba(208,2,27,.1)' : 'rgba(62,207,142,.1)';
-    statusEl.innerHTML = payless
-      ? `⚠ Parsed — matched ${matched} lines, <b style="color:var(--red)">${payless} line${payless > 1 ? 's' : ''} certified BELOW applied</b> (highlighted red). Review, then "Upload & Confirm".${parsed._truncated ? ' <i>(response was truncated — double-check the last lines)</i>' : ''}`
-      : `✓ Parsed — matched ${matched} lines, no payless detected. Review, then "Upload & Confirm".${parsed._truncated ? ' <i>(response was truncated — double-check the last lines)</i>' : ''}`;
+    const extras = [];
+    if (netDerived)     extras.push('this-period net derived from payment due + retention movement');
+    if (summaryFilled)  extras.push('summary-only notice — gross valuation matches your application, lines certified in full at applied values');
+    const extraTxt = extras.length ? ` <i>(${extras.join('; ')})</i>` : '';
+    if (summaryMismatch !== 0 && !summaryFilled && matched === 0) {
+      statusEl.style.background = 'rgba(255,165,0,.12)';
+      statusEl.innerHTML = `⚠ Parsed header only — summary notice with no line breakdown, and its gross valuation is <b>£${Math.abs(summaryMismatch).toFixed(2)} ${summaryMismatch < 0 ? 'BELOW' : 'above'}</b> your applied total. Fill the per-line certified values manually (or "Certify in full" and adjust), then "Upload & Confirm".${extraTxt}`;
+    } else {
+      statusEl.style.background = payless ? 'rgba(208,2,27,.1)' : 'rgba(62,207,142,.1)';
+      statusEl.innerHTML = payless
+        ? `⚠ Parsed — matched ${matched} lines, <b style="color:var(--red)">${payless} line${payless > 1 ? 's' : ''} certified BELOW applied</b> (highlighted red). Review, then "Upload & Confirm".${extraTxt}${parsed._truncated ? ' <i>(response was truncated — double-check the last lines)</i>' : ''}`
+        : `✓ Parsed — matched ${matched} lines, no payless detected. Review, then "Upload & Confirm".${extraTxt}${parsed._truncated ? ' <i>(response was truncated — double-check the last lines)</i>' : ''}`;
+    }
   } catch (err) {
     console.error('Cert OCR failed', err);
     statusEl.style.background = 'rgba(255,165,0,.1)';
