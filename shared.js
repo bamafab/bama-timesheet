@@ -41225,6 +41225,13 @@ function openCertUploadModal() {
   if (_bdIn) _bdIn.value = '';
   const _bdLbl = document.getElementById('afpCertBdDropLabel');
   if (_bdLbl) _bdLbl.innerHTML = _afpCertBdLabelDefault();
+  // Reset the MAIN drop label too — leaving the old filename showing after
+  // the staged file was nulled made a re-opened modal look like the notice
+  // was still attached (19/08 bug: xlsx-only parse with a stale PDF label).
+  const _mainLbl = document.getElementById('afpCertDropLabel');
+  if (_mainLbl) _mainLbl.innerHTML = _afpCertMainLabelDefault();
+  const _analyseBtn = document.getElementById('afpCertAnalyseBtn');
+  if (_analyseBtn) { _analyseBtn.disabled = true; _analyseBtn.textContent = '🤖 Analyse'; }
   document.getElementById('afpCertOcrStatus').style.display = 'none';
   document.getElementById('afpCertRef').value = '';
   document.getElementById('afpCertDate').value = new Date().toISOString().slice(0, 10);
@@ -41306,6 +41313,11 @@ function certifyAfpInFull() {
     inp.value = inp.dataset.appliedCum || '';
   });
   toast('Copied applied figures — adjust any line they paid less on', 'info');
+}
+
+function _afpCertMainLabelDefault() {
+  return `📥 <b>Drop the payment notice / certificate here</b> or click to browse<br>
+  <span style="font-size:11px;color:var(--subtle)">AI reads the figures and flags payless lines — or skip the file and enter figures manually below</span>`;
 }
 
 function _afpCertBdLabelDefault() {
@@ -41427,7 +41439,7 @@ Line rules:
 - When a per-line certification schedule or breakdown IS included (in either document), match its rows to our application lines below by description and order, and fill certified_cumulative_value with the printed value VERBATIM. Never cap a value at, or adjust it toward, our applied figure — QSs certify above or below what we applied; report exactly what is printed. A printed blank/dash/0 against an item they list IS a certified value of 0.
 - A single figure covering MANY of our lines with no per-row values (e.g. one "Contract sum" number): leave those lines out — never estimate or split a total across lines.
 - Header totals ALWAYS come from the payment notice when one is provided, never from the supplementary breakdown.
-- Match against our application lines below by description and order. Only include lines you can match confidently; skip headers/subtotals.
+- Match against our application lines below by description and order. line_index is EXACTLY the number shown against the line in "Our application lines" below. Only include lines you can match confidently; skip headers/subtotals.
 - Keep each line_items entry on one line, no extra whitespace.
 
 Our application lines:
@@ -41439,6 +41451,7 @@ ${linesDesc}`
     const text = (result.content?.find(b => b.type === 'text')?.text || '').trim();
     const parsed = _extractJsonLoose(text);
     _afpCertParsed = parsed;
+    console.log('[certParse] docs:', [_afpCertFile?.name, _afpCertBdFile?.name].filter(Boolean), 'parsed:', parsed);
 
     if (parsed.certificate_ref)         document.getElementById('afpCertRef').value    = parsed.certificate_ref;
     if (parsed.certificate_date)        document.getElementById('afpCertDate').value   = parsed.certificate_date;
@@ -41527,6 +41540,10 @@ ${linesDesc}`
         inp.style.borderColor = ''; inp.style.color = '';
       }
     });
+    const analysedTxt = `Analysed: ${[_afpCertFile, _afpCertBdFile].filter(Boolean).map(f => `<b>${escapeHtml(f.name)}</b>`).join(' + ')}. `;
+    const noNoticeWarn = !_afpCertFile
+      ? ` <b style="color:var(--orange, #f5a623)">⚠ No payment notice attached</b> — header figures came from the breakdown only; attach the notice and re-Analyse for retention, payment due and dates.`
+      : '';
     const extras = [];
     if (netDerived)     extras.push('this-period net derived from payment due + retention movement');
     if (summaryFilled)  extras.push('summary-only notice — gross valuation matches your application, lines certified in full at applied values');
@@ -41535,12 +41552,12 @@ ${linesDesc}`
     const extraTxt = extras.length ? ` <i>(${extras.join('; ')})</i>` : '';
     if (summaryMismatch !== 0 && !summaryFilled && matched === 0) {
       statusEl.style.background = 'rgba(255,165,0,.12)';
-      statusEl.innerHTML = `⚠ Parsed header only — summary notice with no line breakdown, and its gross valuation is <b>£${Math.abs(summaryMismatch).toFixed(2)} ${summaryMismatch < 0 ? 'BELOW' : 'above'}</b> your applied total. Fill the per-line certified values manually (or "Certify in full" and adjust), then "Upload & Confirm".${extraTxt}`;
+      statusEl.innerHTML = `${analysedTxt}⚠ Parsed header only — summary notice with no line breakdown, and its gross valuation is <b>£${Math.abs(summaryMismatch).toFixed(2)} ${summaryMismatch < 0 ? 'BELOW' : 'above'}</b> your applied total. Fill the per-line certified values manually (or "Certify in full" and adjust), then "Upload & Confirm".${extraTxt}${noNoticeWarn}`;
     } else {
       statusEl.style.background = payless ? 'rgba(208,2,27,.1)' : 'rgba(62,207,142,.1)';
       statusEl.innerHTML = payless
-        ? `⚠ Parsed — matched ${matched} lines, <b style="color:var(--red)">${payless} line${payless > 1 ? 's' : ''} certified BELOW applied</b> (highlighted red). Review, then "Upload & Confirm".${extraTxt}${parsed._truncated ? ' <i>(response was truncated — double-check the last lines)</i>' : ''}`
-        : `✓ Parsed — matched ${matched} lines, no payless detected. Review, then "Upload & Confirm".${extraTxt}${parsed._truncated ? ' <i>(response was truncated — double-check the last lines)</i>' : ''}`;
+        ? `${analysedTxt}⚠ Parsed — matched ${matched} lines, <b style="color:var(--red)">${payless} line${payless > 1 ? 's' : ''} certified BELOW applied</b> (highlighted red). Review, then "Upload & Confirm".${extraTxt}${noNoticeWarn}${parsed._truncated ? ' <i>(response was truncated — double-check the last lines)</i>' : ''}`
+        : `${analysedTxt}✓ Parsed — matched ${matched} lines, no payless detected. Review, then "Upload & Confirm".${extraTxt}${noNoticeWarn}${parsed._truncated ? ' <i>(response was truncated — double-check the last lines)</i>' : ''}`;
     }
   } catch (err) {
     console.error('Cert OCR failed', err);
