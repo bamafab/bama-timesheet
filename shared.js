@@ -36424,6 +36424,9 @@ let _invSupplierPoList = [];            // POs with received supplier invoices
 let _invSupInvoices = [];               // SupplierInvoices ledger rows (new AP model)
 let _invProjectsCache = [];
 let _invClientsCache = [];
+let _invQuotesCache = [];        // QB quotes (light list) for the Bill-from-Quote picker
+let _invSelectedQuote = null;    // QB quote chosen in the New Invoice modal (traceability label only)
+let _invPdfPreviewUrl = null;    // blob URL of the open PDF preview (revoked on close)
 
 async function initInvoiceTrackerPage() {
   const authed = pinSessionGet();
@@ -36530,12 +36533,14 @@ async function verifyInvPin() {
 // ── Support data ──────────────────────────────────────────────────────────
 async function loadInvoicingSupportData() {
   try {
-    const [projects, clients] = await Promise.all([
+    const [projects, clients, quotes] = await Promise.all([
       api.get('/api/projects').catch(() => []),
-      api.get('/api/clients').catch(() => [])
+      api.get('/api/clients').catch(() => []),
+      api.get('/api/qb-quotes').catch(() => [])
     ]);
     _invProjectsCache = Array.isArray(projects) ? projects : [];
     _invClientsCache  = Array.isArray(clients)  ? clients  : [];
+    _invQuotesCache   = Array.isArray(quotes)   ? quotes   : [];
   } catch (e) {
     console.warn('Invoice tracker support data load failed:', e);
   }
@@ -41778,14 +41783,31 @@ function _invDueDefault(invDate, termsDays) {
   if (!invDate) return '';
   const d = new Date(invDate);
   if (isNaN(d.getTime())) return '';
-  d.setDate(d.getDate() + (Number(termsDays) > 0 ? Number(termsDays) : _invPaymentTermsDays));
+  const t = Number(termsDays);
+  d.setDate(d.getDate() + (Number.isFinite(t) && t >= 0 && termsDays !== undefined && termsDays !== null && termsDays !== '' ? t : _invPaymentTermsDays));
   return d.toISOString().slice(0, 10);
 }
 
-// Called by the invoice-date input's onchange — respects client payment terms
+// Effective terms: the editable Terms (days) field wins; blank falls back to
+// the active client's payment terms (or 30). 0 is valid — due same day.
+function _invEffectiveTermsDays() {
+  const el = document.getElementById('invNewTermsDays');
+  if (el && el.value !== '') {
+    const v = Number(el.value);
+    if (Number.isFinite(v) && v >= 0) return v;
+  }
+  return _invPaymentTermsDays;
+}
+
+// Called by the invoice-date input's onchange — respects the terms field
 function _invApplyDueDate(dateStr) {
   const el = document.getElementById('invNewDueDate');
-  if (el) el.value = _invDueDefault(dateStr);
+  if (el) el.value = _invDueDefault(dateStr, _invEffectiveTermsDays());
+}
+
+// Terms (days) field edited → recompute due date from the invoice date
+function _invOnTermsChange() {
+  _invApplyDueDate(document.getElementById('invNewDate').value);
 }
 
 // Map DB flags -> treatment select value
@@ -41813,7 +41835,10 @@ async function openNewInvoiceModal() {
   document.getElementById('invNewProjectSearch').value = '';
   document.getElementById('invNewProjectSelected').textContent = '';
   document.getElementById('invNewProjectDropdown').innerHTML = '';
+  clearInvQuote();
   _invPaymentTermsDays = 30;
+  const _tEl = document.getElementById('invNewTermsDays');
+  if (_tEl) { _tEl.value = ''; _tEl.placeholder = '30'; }
   clearInvParent();
   document.getElementById('invNewParentWrap').style.display = 'none';
   document.getElementById('invNewModalTitle').textContent = '🧾 New Invoice';
@@ -41956,7 +41981,14 @@ function selectInvCustomer(id) {
   const treatEl = document.getElementById('invNewVatTreatment');
   if (treatEl) treatEl.value = treatment;
   _invPaymentTermsDays = Number(c.payment_terms_days) > 0 ? Number(c.payment_terms_days) : 30;
+  const _termsEl = document.getElementById('invNewTermsDays');
+  if (_termsEl) { _termsEl.value = ''; _termsEl.placeholder = String(_invPaymentTermsDays); }
   _invApplyDueDate(document.getElementById('invNewDate').value);
+  // A project belonging to a different client no longer applies
+  if (_invSelectedProject && _invSelectedProject.client_id && _invSelectedProject.client_id !== c.id) {
+    clearInvProject();
+    toast('Project cleared — it belonged to a different client', 'info');
+  }
   const hint = document.getElementById('invNewVatHint');
   if (hint) hint.textContent = `Client default: ${treatment === 'standard' ? 'Standard VAT' : treatment === 'zero' ? 'Zero / no VAT' : 'Domestic reverse charge'} · ${_invPaymentTermsDays}-day terms`;
   recalcInvoiceTotals();
@@ -41972,9 +42004,15 @@ function filterInvProjects(q) {
   const dropdown = document.getElementById('invNewProjectDropdown');
   if (!dropdown) return;
   const lower = (q || '').toLowerCase().trim();
-  if (!lower) { dropdown.innerHTML = ''; return; }
-  const matches = _invProjectsCache
-    .filter(p => ((p.project_number || '') + ' ' + (p.project_name || '')).toLowerCase().includes(lower))
+  // Client selected → restrict to that client's projects. With an empty query
+  // that still lists them (focus the box to browse); no client + empty query
+  // keeps the old behaviour (type to search everything).
+  const pool = _invSelectedClient
+    ? _invProjectsCache.filter(p => p.client_id === _invSelectedClient.id)
+    : _invProjectsCache;
+  if (!lower && !_invSelectedClient) { dropdown.innerHTML = ''; return; }
+  const matches = pool
+    .filter(p => !lower || ((p.project_number || '') + ' ' + (p.project_name || '')).toLowerCase().includes(lower))
     .slice(0, 8);
   dropdown.innerHTML = `<div style="position:absolute;top:0;left:0;right:0;background:var(--surface);
        border:1px solid var(--border);border-radius:6px;max-height:240px;overflow:auto;z-index:30">
@@ -41986,7 +42024,7 @@ function filterInvProjects(q) {
         <span style="font-family:var(--font-mono);font-weight:600">${escapeHtml(p.project_number || '')}</span>
         — ${escapeHtml(p.project_name || '')}
       </div>`).join('')}
-    ${matches.length === 0 ? '<div style="padding:8px 12px;color:var(--subtle);font-size:12px">No matching projects</div>' : ''}
+    ${matches.length === 0 ? `<div style="padding:8px 12px;color:var(--subtle);font-size:12px">${_invSelectedClient ? 'No matching projects for ' + escapeHtml(_invSelectedClient.company_name || 'this client') : 'No matching projects'}</div>` : ''}
     <div style="padding:8px 12px;cursor:pointer;font-size:13px;color:var(--muted);font-style:italic"
          onmousedown="clearInvProject()"
          onmouseover="this.style.background='var(--surface2)'"
@@ -42002,12 +42040,129 @@ function selectInvProject(id) {
   document.getElementById('invNewProjectSearch').value = `${p.project_number || ''} — ${p.project_name || ''}`;
   document.getElementById('invNewProjectSelected').textContent = `✓ ${p.project_number || ''}`;
   document.getElementById('invNewProjectDropdown').innerHTML = '';
+  // Project picked first → pull its client in (terms, VAT defaults come with it)
+  if (p.client_id && (!_invSelectedClient || _invSelectedClient.id !== p.client_id)) {
+    selectInvCustomer(p.client_id);
+  }
 }
 function clearInvProject() {
   _invSelectedProject = null;
   document.getElementById('invNewProjectSearch').value = '';
   document.getElementById('invNewProjectSelected').textContent = '';
   document.getElementById('invNewProjectDropdown').innerHTML = '';
+}
+
+// ── Bill-from-Quote picker ────────────────────────────────────────────────
+// Focus with a project selected → that project's quotes first. Typing
+// searches ALL QB quotes by reference / company / project name, so a quote
+// that was never linked to a project can still be billed.
+function filterInvQuotes(q) {
+  const dropdown = document.getElementById('invNewQuoteDropdown');
+  if (!dropdown) return;
+  const lower = (q || '').toLowerCase().trim();
+  const all = _invQuotesCache || [];
+  let matches;
+  if (!lower) {
+    // Browse mode: project's linked quotes, else the client's company quotes
+    if (_invSelectedProject) {
+      matches = all.filter(x => x.project_id === _invSelectedProject.id);
+    } else if (_invSelectedClient) {
+      const cn = (_invSelectedClient.company_name || '').toLowerCase();
+      matches = cn ? all.filter(x => (x.company || '').toLowerCase() === cn) : [];
+    } else {
+      dropdown.innerHTML = ''; return;
+    }
+  } else {
+    matches = all.filter(x =>
+      (`${x.reference || ''} ${x.company || ''} ${x.project_name || ''}`).toLowerCase().includes(lower));
+  }
+  // Won first, then newest
+  matches = matches.slice().sort((a, b) => {
+    const aw = a.status === 'Won' ? 0 : 1, bw = b.status === 'Won' ? 0 : 1;
+    if (aw !== bw) return aw - bw;
+    return String(b.date_created || '').localeCompare(String(a.date_created || ''));
+  }).slice(0, 8);
+  dropdown.innerHTML = `<div style="position:absolute;top:0;left:0;right:0;background:var(--surface);
+       border:1px solid var(--border);border-radius:6px;max-height:240px;overflow:auto;z-index:30">
+    ${matches.map(x => `
+      <div style="padding:8px 12px;cursor:pointer;font-size:13px;border-bottom:1px solid var(--border)"
+           onmousedown="selectInvQuote(${x.id})"
+           onmouseover="this.style.background='var(--surface2)'"
+           onmouseout="this.style.background=''">
+        <span style="font-family:var(--font-mono);font-weight:600">${escapeHtml(x.reference || '')}</span>
+        — ${escapeHtml(x.company || '')}
+        <span style="color:var(--muted);font-size:11px">· £${Number(x.total_ex_vat || 0).toLocaleString('en-GB', { minimumFractionDigits: 2 })} ex VAT${x.status ? ' · ' + escapeHtml(x.status) : ''}${x.project_name ? ' · ' + escapeHtml(x.project_name) : ''}</span>
+      </div>`).join('')}
+    ${matches.length === 0 ? '<div style="padding:8px 12px;color:var(--subtle);font-size:12px">No matching quotes — type a reference or company to search all quotes</div>' : ''}
+    <div style="padding:8px 12px;cursor:pointer;font-size:13px;color:var(--muted);font-style:italic"
+         onmousedown="clearInvQuote()"
+         onmouseover="this.style.background='var(--surface2)'"
+         onmouseout="this.style.background=''">
+      Clear (no quote link)
+    </div>
+  </div>`;
+}
+
+async function selectInvQuote(id) {
+  const x = (_invQuotesCache || []).find(q => q.id === id);
+  if (!x) return;
+  document.getElementById('invNewQuoteDropdown').innerHTML = '';
+
+  // One line, one total — never itemise the quote's internal breakdown.
+  const total = _r2(x.total_ex_vat || 0);
+  const revLabel = (x.revision !== null && x.revision !== undefined && String(x.revision) !== '' && String(x.revision) !== '0')
+    ? ` Rev ${x.revision}` : '';
+  const projBit = x.project_name ? ` — ${x.project_name}` : '';
+  const line = {
+    description: `As per Quotation ${x.reference || ''}${revLabel}${projBit}`.trim(),
+    quantity: 1, unit: '', unit_price: total
+  };
+
+  // Existing typed lines get a confirm before being replaced
+  const hasContent = _invLineRows.some(l => (l.description || '').trim() || Number(l.unit_price || 0) !== 0);
+  if (hasContent) {
+    const okReplace = await bamaConfirm({
+      title: 'Replace line items?',
+      body: `Billing <b>${escapeHtml(x.reference || 'this quote')}</b> replaces the current line items with a single
+       "As per Quotation" line at <b>£${_invFmt2(total)}</b> ex VAT. Continue?`,
+      confirmText: 'Replace lines'
+    });
+    if (!okReplace) return;
+  }
+
+  _invSelectedQuote = x;
+  _invLineRows = [line];
+  renderInvLineRows();
+
+  document.getElementById('invNewQuoteSearch').value = `${x.reference || ''} — ${x.company || ''}`;
+  document.getElementById('invNewQuoteSelected').textContent =
+    `✓ Billing ${x.reference || ''}${revLabel} · £${_invFmt2(total)} ex VAT (line fully editable)`;
+
+  // Pull the quote's project + client in if not already chosen
+  if (x.project_id && (!_invSelectedProject || _invSelectedProject.id !== x.project_id)) {
+    const p = (_invProjectsCache || []).find(pp => pp.id === x.project_id);
+    if (p) selectInvProject(p.id);
+  }
+  if (!_invSelectedClient && x.company) {
+    const c = (_invClientsCache || []).find(cc =>
+      (cc.company_name || '').trim().toLowerCase() === x.company.trim().toLowerCase());
+    if (c) selectInvCustomer(c.id);
+    else {
+      document.getElementById('invNewCustomerSearch').value = x.company;
+      document.getElementById('invNewCustomerSelected').textContent = `✓ "${x.company}" (free-text, from ${x.reference || 'quote'})`;
+    }
+  }
+  recalcInvoiceTotals();
+}
+
+function clearInvQuote() {
+  _invSelectedQuote = null;
+  const s = document.getElementById('invNewQuoteSearch');
+  if (s) s.value = '';
+  const sel = document.getElementById('invNewQuoteSelected');
+  if (sel) sel.textContent = '';
+  const dd = document.getElementById('invNewQuoteDropdown');
+  if (dd) dd.innerHTML = '';
 }
 
 // ── Line items ──
@@ -42102,6 +42257,55 @@ function recalcInvoiceTotals() {
   // Show the reverse-charge row only when CIS reverse is on.
   document.getElementById('invTotalVatRow').style.display     = cisReverse ? 'none' : '';
   document.getElementById('invTotalReverseRow').style.display = cisReverse ? '' : 'none';
+}
+
+// ── Preview PDF — renders the exact invoice PDF from the current form
+// WITHOUT saving anything. Same payload maths, same renderer as Save & Issue,
+// so what you preview is byte-for-byte what will be issued.
+async function previewInvoicePdf() {
+  const payload = _buildInvoicePayload();
+  if (!payload) return;
+  const btn = document.getElementById('invPreviewBtn');
+  try {
+    if (btn) { btn.disabled = true; btn.textContent = 'Rendering…'; }
+    await loadLogoDataUri();
+    const pseudo = {
+      ...payload,
+      id: _invEditing ? _invEditing.id : null,
+      ref: document.getElementById('invNewRef').value || 'PREVIEW',
+      // Pre-resolve joins so _buildInvoicePdfData never tries to re-fetch a
+      // row that doesn't exist yet:
+      parent_invoice_ref: _invSelectedParent ? _invSelectedParent.ref
+        : (_invEditing && _invEditing.parent_invoice_ref) || null,
+      afp_ref: (_invEditing && _invEditing.afp_ref) || null,
+      source_afp_id: null
+    };
+    const pdfData = await _buildInvoicePdfData(pseudo);
+    const pdfBlob = await renderBamaInvoicePDF(pdfData);
+    if (!pdfBlob || pdfBlob.size < 8192) throw new Error('PDF render came back empty');
+
+    if (_invPdfPreviewUrl) { URL.revokeObjectURL(_invPdfPreviewUrl); _invPdfPreviewUrl = null; }
+    _invPdfPreviewUrl = URL.createObjectURL(pdfBlob);
+    const frame = document.getElementById('invPdfPreviewFrame');
+    if (frame) frame.src = _invPdfPreviewUrl;
+    const dl = document.getElementById('invPdfPreviewDownload');
+    if (dl) { dl.href = _invPdfPreviewUrl; dl.download = `${pseudo.ref}-preview.pdf`; }
+    const title = document.getElementById('invPdfPreviewTitle');
+    if (title) title.textContent = `👁 ${pseudo.kind === 'credit_note' ? 'Credit Note' : pseudo.kind === 'pro_forma' ? 'Pro Forma' : 'Invoice'} Preview — ${pseudo.ref}`;
+    document.getElementById('invPdfPreviewModal').classList.add('active');
+  } catch (err) {
+    console.error('Invoice preview failed', err);
+    toast('Preview failed: ' + (err.message || 'unknown'), 'error');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = '👁 Preview PDF'; }
+  }
+}
+
+function closeInvPdfPreview() {
+  document.getElementById('invPdfPreviewModal').classList.remove('active');
+  const frame = document.getElementById('invPdfPreviewFrame');
+  if (frame) frame.src = 'about:blank';
+  if (_invPdfPreviewUrl) { URL.revokeObjectURL(_invPdfPreviewUrl); _invPdfPreviewUrl = null; }
 }
 
 // ── Save (Draft) — no PDF yet ──
@@ -42783,6 +42987,9 @@ async function editInvoiceFromDetail() {
   _invSelectedClient = inv.client_id ? (_invClientsCache.find(c => c.id === inv.client_id) || null) : null;
   _invSelectedProject = inv.project_id ? (_invProjectsCache.find(p => p.id === inv.project_id) || null) : null;
   _invPaymentTermsDays = Number(inv.client_payment_terms) > 0 ? Number(inv.client_payment_terms) : 30;
+  clearInvQuote();
+  const _edTermsEl = document.getElementById('invNewTermsDays');
+  if (_edTermsEl) { _edTermsEl.value = ''; _edTermsEl.placeholder = String(_invPaymentTermsDays); }
 
   document.getElementById('invNewModalTitle').textContent = `✏️ Edit ${inv.ref}`;
   document.getElementById('invNewKind').value = inv.kind || 'invoice';
@@ -43040,6 +43247,142 @@ Rules:
 // trusted for arithmetic — the PO's stated net is used purely as a sanity
 // cross-check shown in the hint line.
 // ═══════════════════════════════════════════════════════════════════════════
+// ── Fill from Quote (PDF/photo) — for quotes that aren't in the ERP ──────
+// One AI read → customer + quote ref + ex-VAT total → a SINGLE invoice line
+// "As per Quotation {ref}". The AI only reads the document — the invoice
+// figure is exactly the stated ex-VAT total, never recomputed or invented.
+async function parseInvoiceQuote(input) {
+  const file = input && input.files && input.files[0];
+  if (input) input.value = '';               // allow re-picking the same file
+  if (!file) return;
+  const hint = document.getElementById('invPoParseHint');
+  const btn  = document.getElementById('invQuoteParseBtn');
+  if (btn) btn.disabled = true;
+  if (hint) { hint.style.color = 'var(--muted)'; hint.textContent = '⏳ Reading quote…'; }
+
+  try {
+    const parsed = await _invParseQuoteFile(file);
+    await _invApplyParsedQuote(parsed);
+    if (hint) {
+      hint.style.color = 'var(--green)';
+      hint.textContent = `✓ Filled from quote ${parsed.quote_ref || ''} — check the total against the document`.trim();
+    }
+  } catch (err) {
+    console.error('Quote parse failed:', err);
+    if (hint) { hint.style.color = 'var(--red)'; hint.textContent = '✗ ' + err.message; }
+    toast('Could not read that quote: ' + err.message, 'error');
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+async function _invParseQuoteFile(file) {
+  const base64 = await new Promise((res, rej) => {
+    const reader = new FileReader();
+    reader.onload = () => res(reader.result.split(',')[1]);
+    reader.onerror = () => rej(new Error('Failed to read file'));
+    reader.readAsDataURL(file);
+  });
+  const isPdf = /pdf$/i.test(file.type) || /\.pdf$/i.test(file.name);
+  const mediaBlock = isPdf
+    ? { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: base64 } }
+    : { type: 'image',    source: { type: 'base64', media_type: file.type || 'image/png', data: base64 } };
+
+  const prompt = `This is a QUOTATION issued by BAMA Fabrication Ltd to one of its customers. BAMA will now raise a sales invoice against it as a single line "As per Quotation {ref}" for the quote's ex-VAT total. Extract only what's needed.
+
+Return ONLY a JSON object, no markdown, no explanation:
+{
+  "customer": "the company the quote is ADDRESSED TO (the recipient — NOT Bama Fabrication, Bama is the issuer)",
+  "quote_ref": "the quotation reference, e.g. 'Q260533', 'QU-1044'",
+  "revision": "revision letter/number if shown (e.g. 'B', '2'), else null",
+  "quote_date": "YYYY-MM-DD or null",
+  "project": "the project / site / job description line, or null",
+  "total_ex_vat": number (the quote's stated TOTAL excluding VAT — the figure the customer accepted),
+  "vat_amount": number or null,
+  "total_inc_vat": number or null
+}
+
+Rules:
+- Dates may be DD/MM/YYYY or DD.MM.YYYY — always UK day-first; convert to YYYY-MM-DD.
+- Amounts may use comma decimals / space thousands; return plain numbers.
+- total_ex_vat must be the STATED total on the document — never sum or recompute it yourself. If several totals appear (e.g. options), use the main/grand total.
+- Never return Bama's own details as the customer.`;
+
+  const _tok = await getToken();
+  const call = () => fetch(API_BASE + '/api/claude-proxy', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${_tok}` },
+    body: JSON.stringify({
+      model: 'claude-sonnet-4-6',
+      max_tokens: 1000,
+      messages: [{ role: 'user', content: [ mediaBlock, { type: 'text', text: prompt } ] }]
+    })
+  });
+
+  let response = await call();
+  if (response.status === 429) {
+    const hint = document.getElementById('invPoParseHint');
+    if (hint) hint.textContent = '⏳ Rate limited — waiting 30s…';
+    await new Promise(r => setTimeout(r, 30000));
+    response = await call();
+  }
+  if (!response.ok) throw new Error(`AI error ${response.status}`);
+  const data = await response.json();
+  const text = (data.content || []).map(c => c.text || '').join('').trim();
+  const clean = text.replace(/^```json\s*/, '').replace(/\s*```$/, '').trim();
+  let parsed;
+  try { parsed = JSON.parse(clean); }
+  catch { throw new Error('AI returned invalid JSON'); }
+  const total = Number(parsed && parsed.total_ex_vat);
+  if (!parsed || !isFinite(total) || total <= 0) {
+    throw new Error('No ex-VAT total found on that document');
+  }
+  return parsed;
+}
+
+// Deterministic application onto the open invoice modal: one line, one total.
+async function _invApplyParsedQuote(parsed) {
+  const total = _r2(parsed.total_ex_vat);
+  const ref = String(parsed.quote_ref || '').trim();
+  const rev = String(parsed.revision || '').trim();
+  const projBit = String(parsed.project || '').trim();
+  const line = {
+    description: `As per Quotation ${ref}${rev ? ' Rev ' + rev : ''}${projBit ? ' — ' + projBit : ''}`.trim(),
+    quantity: 1, unit: '', unit_price: total
+  };
+
+  const hasContent = _invLineRows.some(l => (l.description || '').trim() || Number(l.unit_price || 0) !== 0);
+  if (hasContent) {
+    const okReplace = await bamaConfirm({
+      title: 'Replace line items?',
+      body: `The quote fills a single line — <b>As per Quotation ${escapeHtml(ref || '?')}</b> at
+             <b>£${_invFmt2(total)}</b> ex VAT — replacing the current line items. Continue?`,
+      confirmText: 'Replace lines'
+    });
+    if (!okReplace) return;
+  }
+
+  _invSelectedQuote = null;
+  clearInvQuote();
+  const qSel = document.getElementById('invNewQuoteSelected');
+  if (qSel && ref) qSel.textContent = `✓ Billing ${ref}${rev ? ' Rev ' + rev : ''} (parsed from PDF — not linked to an ERP quote)`;
+  _invLineRows = [line];
+  renderInvLineRows();
+
+  // Customer: match the clients register (brings VAT treatment + terms), else free-text
+  const name = String(parsed.customer || '').trim();
+  if (name && !_invSelectedClient) {
+    const c = (_invClientsCache || []).find(cc =>
+      (cc.company_name || '').trim().toLowerCase() === name.toLowerCase());
+    if (c) selectInvCustomer(c.id);
+    else {
+      document.getElementById('invNewCustomerSearch').value = name;
+      document.getElementById('invNewCustomerSelected').textContent = `✓ "${name}" (free-text, from quote)`;
+    }
+  }
+  recalcInvoiceTotals();
+}
+
 async function parseInvoicePO(input) {
   const file = input && input.files && input.files[0];
   if (input) input.value = '';               // allow re-picking the same file
