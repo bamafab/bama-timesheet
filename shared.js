@@ -42056,6 +42056,17 @@ function clearInvProject() {
 // Focus with a project selected → that project's quotes first. Typing
 // searches ALL QB quotes by reference / company / project name, so a quote
 // that was never linked to a project can still be billed.
+// Company normaliser for fuzzy matching: lowercase, drop leading "the",
+// drop ltd/limited/plc suffixes and all punctuation — so "The Stonemasonry
+// Company" matches a quote saved as "Stonemasonry Company Ltd".
+function _invNormCompany(s) {
+  return String(s || '').toLowerCase()
+    .replace(/[^a-z0-9 ]/g, ' ')
+    .replace(/\b(ltd|limited|plc|llp|uk)\b/g, ' ')
+    .replace(/^\s*the\s+/, '')
+    .replace(/\s+/g, ' ').trim();
+}
+
 function filterInvQuotes(q) {
   const dropdown = document.getElementById('invNewQuoteDropdown');
   if (!dropdown) return;
@@ -42063,12 +42074,28 @@ function filterInvQuotes(q) {
   const all = _invQuotesCache || [];
   let matches;
   if (!lower) {
-    // Browse mode: project's linked quotes, else the client's company quotes
-    if (_invSelectedProject) {
-      matches = all.filter(x => x.project_id === _invSelectedProject.id);
-    } else if (_invSelectedClient) {
-      const cn = (_invSelectedClient.company_name || '').toLowerCase();
-      matches = cn ? all.filter(x => (x.company || '').toLowerCase() === cn) : [];
+    // Browse mode — three deterministic seams, widest first miss falls through:
+    //  1. quotes with project_id = the selected project
+    //  2. numbering convention: project C260747 was born from quote Q260747
+    //     (covers older wins where project_id was never stamped on the quote)
+    //  3. fuzzy company match against the selected client
+    if (_invSelectedProject || _invSelectedClient) {
+      const seen = new Set();
+      matches = [];
+      const take = arr => arr.forEach(x => { if (!seen.has(x.id)) { seen.add(x.id); matches.push(x); } });
+      if (_invSelectedProject) {
+        take(all.filter(x => x.project_id === _invSelectedProject.id));
+        const pn = String(_invSelectedProject.project_number || '').trim();
+        const refFromProj = /^C\d+/i.test(pn) ? pn.replace(/^C/i, 'Q').toUpperCase() : null;
+        if (refFromProj) take(all.filter(x => String(x.reference || '').toUpperCase().startsWith(refFromProj)));
+      }
+      if (_invSelectedClient) {
+        const cn = _invNormCompany(_invSelectedClient.company_name);
+        if (cn) take(all.filter(x => {
+          const xc = _invNormCompany(x.company);
+          return xc && (xc === cn || xc.includes(cn) || cn.includes(xc));
+        }));
+      }
     } else {
       dropdown.innerHTML = ''; return;
     }
@@ -42093,7 +42120,7 @@ function filterInvQuotes(q) {
         — ${escapeHtml(x.company || '')}
         <span style="color:var(--muted);font-size:11px">· £${Number(x.total_ex_vat || 0).toLocaleString('en-GB', { minimumFractionDigits: 2 })} ex VAT${x.status ? ' · ' + escapeHtml(x.status) : ''}${x.project_name ? ' · ' + escapeHtml(x.project_name) : ''}</span>
       </div>`).join('')}
-    ${matches.length === 0 ? '<div style="padding:8px 12px;color:var(--subtle);font-size:12px">No matching quotes — type a reference or company to search all quotes</div>' : ''}
+    ${matches.length === 0 ? `<div style="padding:8px 12px;color:var(--subtle);font-size:12px">No quotes found${!lower && _invSelectedProject ? ' for ' + escapeHtml(_invSelectedProject.project_number || 'this project') : ''} (${(_invQuotesCache || []).length} loaded) — type a reference or company to search all quotes</div>` : ''}
     <div style="padding:8px 12px;cursor:pointer;font-size:13px;color:var(--muted);font-style:italic"
          onmousedown="clearInvQuote()"
          onmouseover="this.style.background='var(--surface2)'"
@@ -42109,7 +42136,20 @@ async function selectInvQuote(id) {
   document.getElementById('invNewQuoteDropdown').innerHTML = '';
 
   // One line, one total — never itemise the quote's internal breakdown.
-  const total = _r2(x.total_ex_vat || 0);
+  // Total resolution: total_ex_vat column first; if that's NULL/0 (quote not
+  // re-saved since the column existed), fall back to the seeded QuoteLineItems
+  // sum — the SAME figure Project Tracker calls contract value. Deterministic
+  // sums only; nothing is estimated.
+  let total = _r2(x.total_ex_vat || 0);
+  let totalSource = 'quote';
+  if (!(total > 0)) {
+    try {
+      const lines = await api.get(`/api/quote-line-items?qb_quote_id=${x.id}`);
+      const liTotal = sumMoney(Array.isArray(lines) ? lines : [],
+        l => Number(l.quantity || 0) * Number(l.unit_price || 0));
+      if (liTotal > 0) { total = liTotal; totalSource = 'lines'; }
+    } catch (e) { console.warn('quote-line-items fallback failed:', e); }
+  }
   const revLabel = (x.revision !== null && x.revision !== undefined && String(x.revision) !== '' && String(x.revision) !== '0')
     ? ` Rev ${x.revision}` : '';
   const projBit = x.project_name ? ` — ${x.project_name}` : '';
@@ -42135,8 +42175,18 @@ async function selectInvQuote(id) {
   renderInvLineRows();
 
   document.getElementById('invNewQuoteSearch').value = `${x.reference || ''} — ${x.company || ''}`;
-  document.getElementById('invNewQuoteSelected').textContent =
-    `✓ Billing ${x.reference || ''}${revLabel} · £${_invFmt2(total)} ex VAT (line fully editable)`;
+  const selEl = document.getElementById('invNewQuoteSelected');
+  if (total > 0) {
+    selEl.style.color = '';
+    selEl.textContent = `✓ Billing ${x.reference || ''}${revLabel} · £${_invFmt2(total)} ex VAT` +
+      (totalSource === 'lines' ? ' (from quote line items — quote has no saved total)' : '') +
+      ' (line fully editable)';
+  } else {
+    selEl.style.color = 'var(--red)';
+    selEl.textContent = `⚠ ${x.reference || 'Quote'} has no saved total in the ERP — type the figure into Unit £, ` +
+      `or open it in Quote Builder and re-save to store its total`;
+    toast(`${x.reference || 'Quote'} has no saved total — enter the amount manually`, 'warning');
+  }
 
   // Pull the quote's project + client in if not already chosen
   if (x.project_id && (!_invSelectedProject || _invSelectedProject.id !== x.project_id)) {
@@ -42160,9 +42210,47 @@ function clearInvQuote() {
   const s = document.getElementById('invNewQuoteSearch');
   if (s) s.value = '';
   const sel = document.getElementById('invNewQuoteSelected');
-  if (sel) sel.textContent = '';
+  if (sel) { sel.textContent = ''; sel.style.color = ''; }
   const dd = document.getElementById('invNewQuoteDropdown');
   if (dd) dd.innerHTML = '';
+}
+
+// ── Console diagnostic: bamaInvQuoteAudit('Q260747' | 'C260747' | none) ──
+// Run from the browser console on invoice-tracker with the modal open (or
+// not). Prints what the picker can see and WHY a quote isn't matching:
+// cache size, project link, total_ex_vat, and the line-items fallback sum.
+async function bamaInvQuoteAudit(ref) {
+  const all = _invQuotesCache || [];
+  console.log(`[invQuoteAudit] ${all.length} QB quotes in cache`,
+    { selectedClient: _invSelectedClient && _invSelectedClient.company_name,
+      selectedProject: _invSelectedProject && _invSelectedProject.project_number });
+  if (all.length === 0) {
+    console.log('[invQuoteAudit] cache EMPTY — /api/qb-quotes failed or returned nothing. Re-testing…');
+    try { const r = await api.get('/api/qb-quotes'); console.log('[invQuoteAudit] live fetch returned', Array.isArray(r) ? r.length + ' rows' : r); }
+    catch (e) { console.error('[invQuoteAudit] live fetch FAILED:', e); }
+  }
+  let targets = [];
+  if (ref) {
+    const norm = String(ref).toUpperCase().replace(/^C/, 'Q');
+    targets = all.filter(x => String(x.reference || '').toUpperCase().startsWith(norm));
+    if (!targets.length) console.log(`[invQuoteAudit] no cached quote with reference starting ${norm}`);
+  } else if (_invSelectedProject) {
+    targets = all.filter(x => x.project_id === _invSelectedProject.id);
+    console.log(`[invQuoteAudit] ${targets.length} quotes with project_id=${_invSelectedProject.id}`);
+  }
+  for (const x of targets) {
+    let liSum = null;
+    try {
+      const lines = await api.get(`/api/quote-line-items?qb_quote_id=${x.id}`);
+      liSum = sumMoney(Array.isArray(lines) ? lines : [], l => Number(l.quantity || 0) * Number(l.unit_price || 0));
+    } catch (e) { liSum = 'fetch failed: ' + e.message; }
+    console.log(`[invQuoteAudit] ${x.reference}`, {
+      id: x.id, status: x.status, company: x.company,
+      project_id: x.project_id, total_ex_vat: x.total_ex_vat,
+      lineItemsSum: liSum
+    });
+  }
+  return targets;
 }
 
 // ── Line items ──
