@@ -36794,9 +36794,11 @@ function _renderAfpCard(a) {
           ${(() => {
             if (a.certified_value_net == null || (a.status !== 'Certified' && a.status !== 'Invoiced')) return '';
             const diff = Number(a.applied_value_net || 0) - Number(a.certified_value_net || 0);
-            return diff > 0.01
-              ? `<div style="display:inline-block;margin-top:3px;padding:1px 7px;border-radius:9px;font-size:10px;font-weight:700;background:rgba(208,2,27,.15);color:var(--red)">▼ PAYLESS £${diff.toLocaleString('en-GB', { minimumFractionDigits: 2 })}</div>`
-              : '';
+            if (diff > 0.01)
+              return `<div style="display:inline-block;margin-top:3px;padding:1px 7px;border-radius:9px;font-size:10px;font-weight:700;background:rgba(208,2,27,.15);color:var(--red)">▼ PAYLESS £${diff.toLocaleString('en-GB', { minimumFractionDigits: 2 })}</div>`;
+            if (diff < -0.01)
+              return `<div style="display:inline-block;margin-top:3px;padding:1px 7px;border-radius:9px;font-size:10px;font-weight:700;background:rgba(245,166,35,.15);color:var(--orange, #f5a623)">▲ OVER-CERT £${(-diff).toLocaleString('en-GB', { minimumFractionDigits: 2 })}</div>`;
+            return '';
           })()}
         </div>
         <div style="text-align:right">
@@ -41031,6 +41033,33 @@ async function openAfpDetail(id) {
     document.getElementById('afpDetailCertifiedVat').textContent    = isCert ? '£' + Number(afp.certified_vat || 0).toLocaleString('en-GB', { minimumFractionDigits: 2 }) : '—';
     document.getElementById('afpDetailCertifiedGross').textContent  = isCert ? '£' + Number(afp.certified_gross || 0).toLocaleString('en-GB', { minimumFractionDigits: 2 }) : '—';
 
+    // Applied vs certified variance — say out loud whether they certified
+    // more or less than we applied (and by how much), instead of leaving two
+    // grids of figures to eyeball (Mateusz, 2026-08-24).
+    const diffEl = document.getElementById('afpDetailCertDiff');
+    if (diffEl) {
+      if (!isCert || afp.certified_value_net == null) {
+        diffEl.style.display = 'none';
+      } else {
+        const dNet = _r2(Number(afp.certified_value_net || 0) - Number(afp.applied_value_net || 0));
+        const AMBER = 'var(--orange, #f5a623)';
+        diffEl.style.display = '';
+        if (dNet > 0.01) {
+          diffEl.style.background = 'rgba(245,166,35,.1)';
+          diffEl.style.borderColor = 'rgba(245,166,35,.35)';
+          diffEl.innerHTML = `<b style="color:${AMBER}">▲ Certified ${gbp2(dNet)} ABOVE application</b> <span style="color:var(--muted)">(applied net ${gbp2(afp.applied_value_net)}, certified net ${gbp2(afp.certified_value_net)}) — the next AFP starts over-certified lines at the certified level so this value isn't applied for again</span>`;
+        } else if (dNet < -0.01) {
+          diffEl.style.background = 'rgba(208,2,27,.1)';
+          diffEl.style.borderColor = 'rgba(208,2,27,.35)';
+          diffEl.innerHTML = `<b style="color:var(--red)">▼ Certified ${gbp2(-dNet)} BELOW application (payless)</b> <span style="color:var(--muted)">(applied net ${gbp2(afp.applied_value_net)}, certified net ${gbp2(afp.certified_value_net)}) — the shortfall stays claimed and re-applies on the next AFP</span>`;
+        } else {
+          diffEl.style.background = 'rgba(62,207,142,.08)';
+          diffEl.style.borderColor = 'rgba(62,207,142,.3)';
+          diffEl.innerHTML = `<span style="color:var(--green)">✓ Certified as applied</span> <span style="color:var(--muted)">(net ${gbp2(afp.applied_value_net)})</span>`;
+        }
+      }
+    }
+
     // Line items table — grouped by section → item
     document.getElementById('afpDetailLines').innerHTML =
       _afpDetailLinesHtml(afp.line_items || []) ||
@@ -41247,6 +41276,15 @@ function openCertUploadModal() {
   document.getElementById('afpCertVat').value = '';
   document.getElementById('afpCertRet').value = '';
   document.getElementById('afpCertGross').value = '';
+  // Applied-figure hints under the header inputs, so what WE applied is on
+  // screen while typing what THEY certified.
+  const _hint = (id, v) => { const h = document.getElementById(id); if (h) h.textContent = `applied ${gbp2(v || 0)}`; };
+  _hint('afpCertAppliedHintNet',   _afpDetailCurrent.applied_value_net);
+  _hint('afpCertAppliedHintRet',   _afpDetailCurrent.applied_retention);
+  _hint('afpCertAppliedHintVat',   _afpDetailCurrent.applied_vat);
+  _hint('afpCertAppliedHintGross', _afpDetailCurrent.applied_gross);
+  const _varEl = document.getElementById('afpCertVariance');
+  if (_varEl) _varEl.style.display = 'none';
   renderAfpCertLineFields();
   document.getElementById('afpCertModal').classList.add('active');
 }
@@ -41283,26 +41321,92 @@ function _extractJsonLoose(raw) {
   return parsed;
 }
 
+// Grouped section → item, mirroring _afpDetailLinesHtml. Sub-lines repeat the
+// same names under every item ("Approval drawings", "Materials", "Delivery"…)
+// — without the item headers they blend into one anonymous list and you can't
+// tell which AREA a certified value belongs to (Stevenage bug, 2026-08-24).
+// IMPORTANT: data-line-idx stays the ORIGINAL flat index over line_items —
+// the parse fill and the AI prompt's line numbering both key off it.
 function renderAfpCertLineFields() {
   const wrap = document.getElementById('afpCertLineFields');
   if (!wrap || !_afpDetailCurrent) return;
   const fmt = v => Number(v || 0).toLocaleString('en-GB', { minimumFractionDigits: 2 });
-  wrap.innerHTML = (_afpDetailCurrent.line_items || []).map((l, i) => {
+  const all = (_afpDetailCurrent.line_items || []).map((l, i) => ({ l, i }));
+  const lineRow = ({ l, i }) => {
     const appliedCum = l.cumulative_value != null
       ? Number(l.cumulative_value)
       : Number(l.contract_value || 0) * Number(l.this_app_pct_complete || 0) / 100;
     const prevPaid = Number(l.gross_amount_paid || 0);
     return `
     <div style="display:grid;grid-template-columns:1fr 92px 92px 100px;gap:6px;align-items:center;font-size:12px">
-      <div style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap"
-           title="${escapeHtml(l.description || '')}">${l.item_quote_ref ? `<span style="font-family:var(--font-mono);color:var(--muted);font-size:11px">${escapeHtml(l.item_quote_ref)}</span> · ` : ''}${escapeHtml(l.description || '')}</div>
+      <div style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding-left:14px"
+           title="${escapeHtml(l.description || '')}">${escapeHtml(l.description || '')}</div>
       <div style="text-align:right;color:var(--muted)" title="Our applied cumulative">£${fmt(appliedCum)}</div>
       <div style="text-align:right;color:var(--subtle)" title="Previously paid">£${fmt(prevPaid)}</div>
       <input type="number" step="0.01" class="field-input" placeholder="Cert cum £"
              data-line-id="${l.id}" data-line-idx="${i}" data-applied-cum="${appliedCum.toFixed(2)}" data-prev-paid="${prevPaid.toFixed(2)}"
+             oninput="_certVarianceUpdate()"
              style="font-size:12px;padding:4px 6px;text-align:right">
     </div>`;
-  }).join('');
+  };
+  let html = '';
+  const sections = ['measured', 'variation', 'materials'];
+  for (const section of sections) {
+    const rows = all.filter(x => (x.l.section || 'measured') === section);
+    if (!rows.length) continue;
+    html += `<div style="padding:4px 6px;margin-top:2px;background:var(--surface2);border-radius:4px;
+             font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.5px">${escapeHtml(_AFP_SECTION_LABELS[section] || section)}</div>`;
+    const itemNos = [...new Set(rows.map(x => Number(x.l.item_no || 0)))].sort((a, b) => a - b);
+    for (const itemNo of itemNos) {
+      const itemRows = rows.filter(x => Number(x.l.item_no || 0) === itemNo);
+      const meta = itemRows[0].l;
+      if (section !== 'materials' && (meta.item_description || meta.item_quote_ref)) {
+        html += `<div style="padding:3px 6px;background:rgba(255,255,255,.02);border-radius:4px;font-size:11px">
+          <span style="font-family:var(--font-mono);font-weight:700;color:var(--accent)">${itemNo}</span>
+          <span style="font-weight:600;margin-left:6px">${escapeHtml(meta.item_description || '')}</span>
+          <span style="float:right;font-family:var(--font-mono);font-size:10px;color:var(--muted)">
+            ${escapeHtml(meta.item_quote_ref || '')}${meta.item_wo_no ? ' · ' + escapeHtml(meta.item_wo_no) : ''}</span>
+        </div>`;
+      }
+      html += itemRows.map(lineRow).join('');
+    }
+  }
+  wrap.innerHTML = html;
+}
+
+// Live applied-vs-certified comparison in the cert modal. Reads whatever is
+// typed in the header Net/Gross fields (and the per-line inputs) and states
+// plainly whether the certificate is ABOVE, BELOW or matching our application
+// — "we applied 11,543.21, they certified 13,453.90" must be visible at a
+// glance, not something you work out on a calculator (Mateusz, 2026-08-24).
+function _certVarianceUpdate() {
+  const el = document.getElementById('afpCertVariance');
+  if (!el || !_afpDetailCurrent) return;
+  const afp = _afpDetailCurrent;
+  const AMBER = 'var(--orange, #f5a623)';
+  const rows = [];
+  const cmp = (label, certRaw, applied) => {
+    if (certRaw === '' || certRaw == null) return;
+    const cert = Number(certRaw);
+    if (isNaN(cert)) return;
+    const d = _r2(cert - Number(applied || 0));
+    if (d > 0.01)       rows.push(`<div><b>${label}:</b> <b style="color:${AMBER}">▲ ${gbp2(d)} ABOVE applied</b> <span style="color:var(--muted)">(applied ${gbp2(applied)}, certified ${gbp2(cert)})</span></div>`);
+    else if (d < -0.01) rows.push(`<div><b>${label}:</b> <b style="color:var(--red)">▼ ${gbp2(-d)} BELOW applied — payless</b> <span style="color:var(--muted)">(applied ${gbp2(applied)}, certified ${gbp2(cert)})</span></div>`);
+    else                rows.push(`<div><b>${label}:</b> <span style="color:var(--green)">✓ matches applied</span> <span style="color:var(--muted)">(${gbp2(applied)})</span></div>`);
+  };
+  cmp('Net (this period)',  document.getElementById('afpCertNetVal')?.value, afp.applied_value_net);
+  cmp('Gross / amount due', document.getElementById('afpCertGross')?.value,  afp.applied_gross);
+  // Per-line totals: sum of certified cumulative entered vs sum applied cum.
+  const inputs = [...document.querySelectorAll('#afpCertLineFields input')];
+  const filled = inputs.filter(inp => String(inp.value).trim() !== '');
+  if (filled.length) {
+    const certCum    = _r2(sumMoney(filled, inp => Number(inp.value) || 0));
+    const appliedCum = _r2(sumMoney(inputs, inp => Number(inp.dataset.appliedCum) || 0));
+    cmp(`Lines cum (${filled.length}/${inputs.length} filled)`, certCum, appliedCum);
+  }
+  if (!rows.length) { el.style.display = 'none'; return; }
+  el.style.display = '';
+  el.innerHTML = rows.join('');
 }
 
 // Manual fallback / fast path: no OCR needed — copy our applied figures as the
@@ -41317,6 +41421,7 @@ function certifyAfpInFull() {
   document.querySelectorAll('#afpCertLineFields input').forEach(inp => {
     inp.value = inp.dataset.appliedCum || '';
   });
+  _certVarianceUpdate();
   toast('Copied applied figures — adjust any line they paid less on', 'info');
 }
 
@@ -41402,7 +41507,17 @@ async function _runCertParse() {
         const appliedCum = l.cumulative_value != null
           ? Number(l.cumulative_value)
           : Number(l.contract_value || 0) * Number(l.this_app_pct_complete || 0) / 100;
-        return `  ${i + 1}. ${l.item_quote_ref ? l.item_quote_ref + ' · ' : ''}${l.description} (applied cum £${appliedCum.toFixed(2)}, prev paid £${Number(l.gross_amount_paid || 0).toFixed(2)})`;
+        // Area/item context in [brackets]: sub-lines repeat the same names
+        // under every item (Approvals / Materials / Delivery…) — without it
+        // the model cannot tell WHICH area's "Materials" a certified value
+        // belongs to (Stevenage RG Carter, 2026-08-24).
+        const area = [
+          l.item_no != null ? `item ${l.item_no}` : '',
+          l.item_description || '',
+          l.item_quote_ref || '',
+          l.item_wo_no || ''
+        ].filter(Boolean).join(' · ');
+        return `  ${i + 1}. ${area ? `[${area}] ` : ''}${l.description} (applied cum £${appliedCum.toFixed(2)}, prev paid £${Number(l.gross_amount_paid || 0).toFixed(2)})`;
       })
       .join('\n');
     const result = await callClaude({
@@ -41445,6 +41560,7 @@ Line rules:
 - A single figure covering MANY of our lines with no per-row values (e.g. one "Contract sum" number): leave those lines out — never estimate or split a total across lines.
 - Header totals ALWAYS come from the payment notice when one is provided, never from the supplementary breakdown.
 - Match against our application lines below by description and order. line_index is EXACTLY the number shown against the line in "Our application lines" below. Only include lines you can match confidently; skip headers/subtotals.
+- Our lines are grouped into items/areas shown in [brackets]. Sub-line names REPEAT under every area (Approvals, Materials, Delivery…) — always use the bracketed area (and document section headings) to pick the right occurrence; if the document does not make the area clear for a repeated name, skip that line rather than guessing.
 - Keep each line_items entry on one line, no extra whitespace.
 
 Our application lines:
@@ -41564,6 +41680,7 @@ ${linesDesc}`
         ? `${analysedTxt}⚠ Parsed — matched ${matched} lines, <b style="color:var(--red)">${payless} line${payless > 1 ? 's' : ''} certified BELOW applied</b> (highlighted red). Review, then "Upload & Confirm".${extraTxt}${noNoticeWarn}${parsed._truncated ? ' <i>(response was truncated — double-check the last lines)</i>' : ''}`
         : `${analysedTxt}✓ Parsed — matched ${matched} lines, no payless detected. Review, then "Upload & Confirm".${extraTxt}${noNoticeWarn}${parsed._truncated ? ' <i>(response was truncated — double-check the last lines)</i>' : ''}`;
     }
+    _certVarianceUpdate();
   } catch (err) {
     console.error('Cert OCR failed', err);
     statusEl.style.background = 'rgba(255,165,0,.1)';

@@ -75,14 +75,28 @@ function deriveStatus(quantity, qtyWelded, qtyCompleted, qtyFabbed) {
 //
 // Returns the BOM row id that received the pieces.
 async function applyBomDelta(transaction, assembly, heaviestProfile, delta, createdBy) {
-    // Find the open, mergeable BOM row for this assembly.
+    // Route the new pieces the same way a fresh row would go: outsourced
+    // finish needs a supplier DN ('pending'), in-house/no finish goes
+    // straight to 'ready_for_despatch'. Computed FIRST because it also
+    // decides which rows are mergeable below.
+    const bomStatus = await finishIsOutsourced(assembly.finish_service_id)
+        ? 'pending'
+        : 'ready_for_despatch';
+
+    // Find the open, mergeable BOM row for this assembly — SAME STATUS only.
+    // For an outsourced finish a 'ready_for_despatch' row means "RETURNED
+    // from the supplier": merging fresh raw pieces into it would silently
+    // mark them as already coated (the 6-of-7-back-from-PPC bug, 2026-08-24).
+    // New pieces must land on their own 'pending' line so they can be sent
+    // out while the returned batch carries on to despatch.
     const findReq = new sql.Request(transaction);
     findReq.input('aid', sql.Int, assembly.id);
+    findReq.input('st',  sql.NVarChar(32), bomStatus);
     const openRes = await findReq.query(
         `SELECT TOP 1 id, quantity
          FROM JobBomItems WITH (UPDLOCK, HOLDLOCK)
          WHERE source_assembly_id = @aid
-           AND status IN ('pending', 'ready_for_despatch')
+           AND status = @st
          ORDER BY id ASC`
     );
 
@@ -99,13 +113,7 @@ async function applyBomDelta(transaction, assembly, heaviestProfile, delta, crea
         return upd.recordset[0].id;
     }
 
-    // No open row — insert a fresh one. Route it the same way the legacy
-    // fabricate flow does: needs a supplier DN only if the finish is
-    // outsourced, else straight to ready_for_despatch.
-    const bomStatus = await finishIsOutsourced(assembly.finish_service_id)
-        ? 'pending'
-        : 'ready_for_despatch';
-
+    // No mergeable row — insert a fresh one at the routed status.
     const insReq = new sql.Request(transaction);
     insReq.input('jobId',           sql.Int,           assembly.job_id);
     insReq.input('assemblyId',      sql.Int,           assembly.id);
@@ -140,7 +148,7 @@ async function removeBomDelta(transaction, assemblyId, delta) {
          FROM JobBomItems WITH (UPDLOCK, HOLDLOCK)
          WHERE source_assembly_id = @aid
            AND status IN ('pending', 'ready_for_despatch')
-         ORDER BY id DESC`
+         ORDER BY CASE WHEN status = 'pending' THEN 0 ELSE 1 END ASC, id DESC`
     );
     for (const row of openRes.recordset) {
         if (remaining <= 0) break;

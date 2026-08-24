@@ -1563,6 +1563,9 @@
       </div>
     </div>
 
+    <div id="afpDetailCertDiff" style="display:none;padding:8px 10px;border-radius:6px;
+         border:1px solid var(--border);font-size:12px;margin-bottom:14px"></div>
+
     <div id="afpDetailInvLink" style="display:none;padding:8px 10px;border-radius:6px;
          background:rgba(62,207,142,.1);border:1px solid rgba(62,207,142,.3);
          font-size:12px;margin-bottom:14px;text-align:center"></div>
@@ -1643,24 +1646,31 @@
       </div>
     </div>
 
-    <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:8px;margin-bottom:12px">
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:8px;margin-bottom:6px">
       <div>
         <label class="field-label" style="font-size:10px">Net £</label>
-        <input type="number" step="0.01" class="field-input" id="afpCertNetVal">
+        <input type="number" step="0.01" class="field-input" id="afpCertNetVal" oninput="_certVarianceUpdate()">
+        <div id="afpCertAppliedHintNet" style="font-size:10px;color:var(--subtle);text-align:right;margin-top:2px"></div>
       </div>
       <div>
         <label class="field-label" style="font-size:10px">Retention £</label>
-        <input type="number" step="0.01" class="field-input" id="afpCertRet">
+        <input type="number" step="0.01" class="field-input" id="afpCertRet" oninput="_certVarianceUpdate()">
+        <div id="afpCertAppliedHintRet" style="font-size:10px;color:var(--subtle);text-align:right;margin-top:2px"></div>
       </div>
       <div>
         <label class="field-label" style="font-size:10px">VAT £</label>
-        <input type="number" step="0.01" class="field-input" id="afpCertVat">
+        <input type="number" step="0.01" class="field-input" id="afpCertVat" oninput="_certVarianceUpdate()">
+        <div id="afpCertAppliedHintVat" style="font-size:10px;color:var(--subtle);text-align:right;margin-top:2px"></div>
       </div>
       <div>
         <label class="field-label" style="font-size:10px">Gross £ <span style="color:var(--red)">*</span></label>
-        <input type="number" step="0.01" class="field-input" id="afpCertGross">
+        <input type="number" step="0.01" class="field-input" id="afpCertGross" oninput="_certVarianceUpdate()">
+        <div id="afpCertAppliedHintGross" style="font-size:10px;color:var(--subtle);text-align:right;margin-top:2px"></div>
       </div>
     </div>
+
+    <div id="afpCertVariance" style="display:none;padding:8px 10px;border-radius:6px;font-size:12px;
+         margin-bottom:12px;border:1px solid var(--border);background:var(--bg-darker);line-height:1.7"></div>
 
     <div style="margin-bottom:12px">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
@@ -1869,6 +1879,6 @@ function invHelpSection(sec) {
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
-<script src="shared.js?v=20260821b"></script>
+<script src="shared.js?v=20260824a"></script>
 </body>
 </html>

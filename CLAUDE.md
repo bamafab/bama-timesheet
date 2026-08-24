@@ -677,12 +677,21 @@ mark-fabricated step). Migration: `api/sql/add-staged-fabrication.sql`.
   existing reads — kiosk 24h window, project progress rollups,
   `confirmCloseJob` — keep working. On reaching terminal the legacy
   `fabricated_at/by/welder_id/welding_machine_id` fields are stamped too.
-- **Smart BOM merge (`applyBomDelta`).** Completing/welding more pieces of an
-  assembly TOPS UP its existing OPEN BOM row instead of spawning duplicate
-  lines. "Open" = `status IN ('pending','ready_for_despatch')` — i.e. no DN
-  raised yet. Once a DN freezes the row (`at_supplier`/`despatched`/`on_site`),
-  new pieces start a fresh line — a genuinely separate delivery batch. This is
-  the "don't show 1no B2, 3no B2, 1no B2" requirement.
+- **Smart BOM merge (`applyBomDelta`) — SAME-STATUS merge only (2026-08-24).**
+  Completing/welding more pieces of an assembly TOPS UP an existing BOM row
+  instead of spawning duplicate lines — but ONLY a row whose status equals
+  the status a fresh row would get (`pending` if the finish is outsourced,
+  else `ready_for_despatch`). For an outsourced finish (galv / powder coat),
+  a `ready_for_despatch` row means RETURNED from the supplier — merging new
+  raw pieces into it silently marks them as already coated (the "6 of 7 back
+  from PPC, 7th completed later" bug). New pieces on an outsourced-finish
+  assembly therefore always land on a `pending` line so they can be sent for
+  PPC while the returned batch carries on to despatch. Rows frozen onto a DN
+  (`at_supplier`/`despatched`/`on_site`) still never merge. The "don't show
+  1no B2, 3no B2, 1no B2" requirement is preserved within each status.
+  Rollback (`removeBomDelta`) drains `pending` rows before
+  `ready_for_despatch` (newest first within each) so un-completing pulls back
+  not-yet-sent pieces before ever touching a returned batch.
 - **Full action history.** `JobAssemblyActions` logs every fab/weld/complete
   press (stage, qty, operator, machine, bom_item_id, when, who). The counts on
   `JobAssemblies` are the fast-read cache; this table is the audit source of
@@ -2378,5 +2387,21 @@ Both workflows trigger on push to `main`:
 - **NO lump distribution — deleted 2026-08-18 (Mateusz)**: per-line certified values DO NOT EXIST at lump granularity; any split (AI or JS pro-rata) fabricates data and floods the review with fake red/amber deviations. Cert line rule is strictly: fill ONLY lines whose value is explicitly printed per line/item (verbatim, never capped at or adjusted toward applied; a printed blank/dash against a listed item = 0); coarse lumps → those lines stay BLANK for manual fill ("Certify in full" button covers the all-agreed case). Do not reintroduce lump splitting in any form.
 - **Cert parse UX + carry rule (2026-08-18)**: pickers only STAGE files; one `🤖 Analyse` button (quote-helper pattern) runs `_runCertParse()` once over everything attached — one API call for notice+breakdown, not two. Prompt matching restored to e503436 confidence rules (match by description/order, printed values verbatim, never capped; blank/dash on a listed item = 0; single figure spanning many lines = leave out). After parse, deterministic carry: blank lines with no new claim (applied cum == prev paid, ±1p) fill at the paid value — no payless sign means the paid position carries; parsed values always win. Status reports carried count.
 - **Stale-label bug (2026-08-19 root cause of "big mess" parse)**: `openCertUploadModal` nulled `_afpCertFile` but never reset the MAIN dropzone label, so a reopened modal showed the old PDF filename while nothing was staged → xlsx-only parse (gross taken from "This valuation", no retention/dates/ref, 0 matches). Fixed: both labels + Analyse button reset on open; result status now starts with "Analysed: <filenames>" and shows a loud amber warning when no payment notice was attached; raw parsed JSON logged to console as `[certParse]` for ground-truth debugging.
+- **Cert modal: grouped lines + applied-vs-certified variance (2026-08-24, Stevenage RG Carter)**:
+  `renderAfpCertLineFields` renders the per-line cert inputs GROUPED section → item
+  (same headers as `_afpDetailLinesHtml`) — SOV sub-lines repeat identical names
+  under every area (Approvals / Materials / Delivery…), so a flat list made it
+  impossible to tell which area a certified value belonged to. `data-line-idx`
+  stays the ORIGINAL flat line_items index (the parse fill and AI line numbering
+  key off it); `data-line-id` drives the confirm PUT — do not renumber either.
+  The cert-parse prompt's "Our application lines" now carries `[item N · desc ·
+  quote ref]` context per line + a rule to disambiguate repeated names by area
+  (skip, never guess, when the document doesn't make the area clear). The modal
+  header inputs show "applied £X" hints and a live `_certVarianceUpdate()` strip
+  (Net / Gross / Σ lines: amber ▲ ABOVE applied, red ▼ BELOW = payless, green ✓
+  matches) — wired oninput on all header + line inputs, after parse, and on
+  "Certify in full". AFP cards get an amber `▲ OVER-CERT £X` badge (mirror of
+  `▼ PAYLESS`); the AFP detail modal shows an `afpDetailCertDiff` banner stating
+  the certified-vs-applied direction and the next-AFP consequence.
 - **Invoice due date from cert (2026-08-17)**: `Applications.certificate_final_payment_date` (migration `api/sql/add-afp-final-payment-date.sql`, ADD COLUMN → Function App restart). Cert modal has a "Final Payment Date" field; OCR extracts the notice's "Final Date for payment"; cert-confirm PUT stores it; `generate-invoice` uses it as `due_date` when present, else invoice date + client payment terms.
 - **Invoice VAT rate (2026-08-17)**: `Invoices.vat_rate` DECIMAL(5,2) NULL (migration `api/sql/add-invoice-vat-rate.sql`; NULL = legacy 20). Rate select (20/5/0) beside VAT Treatment in the invoice modal; `_invVatRate()` feeds both standard VAT and the CIS reverse-charge info figure in recalc + payload; PDF prints the actual rate on the VAT line and the Section 55A notice. AFP-generated invoices default to 20 (NULL) — flip the rate in the Draft edit. First use: INV0316 at 5%.
