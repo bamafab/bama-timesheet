@@ -1767,7 +1767,8 @@ tr.drag-dragging { opacity:0.35; }
     <div class="modal-title">📐 PlanSwift Import</div>
     <p style="font-size:13px;color:var(--muted);margin-bottom:16px">
       Upload your PlanSwift Excel export or paste the data directly. 
-      The system looks for columns containing: <strong>type/section</strong>, <strong>length</strong>, <strong>quantity</strong> — in any order, any column name.
+      The system looks for columns containing: <strong>type/section</strong>, <strong>length/takeoff/qty</strong>, <strong>units</strong>, and an optional <strong>area/notes/zone</strong> column — in any order.
+      An Area column in the file puts each row straight into its area automatically.
       PDF exports are also supported — AI will extract the takeoff table automatically.
     </p>
 
@@ -1793,6 +1794,7 @@ tr.drag-dragging { opacity:0.35; }
             <th style="text-align:right">Length (mm)</th>
             <th style="text-align:right">Qty</th>
             <th style="text-align:right">kg/m (auto)</th>
+            <th>Area</th>
           </tr></thead>
           <tbody id="psPreviewBody"></tbody>
         </table>
@@ -15761,14 +15763,22 @@ function parsePlanswiftRows(rows, filename) {
 
   for (let i = 0; i < Math.min(rows.length, 10); i++) {
     const r = rows[i].map(c => String(c).toLowerCase().trim());
-    // PlanSwift default: Description | Takeoff | Units
-    if (r[0] === 'description' && (r[1] === 'takeoff' || r[1] === 'length')) {
-      headerIdx = i; colType = 0; colLength = 1; colUnit = 2; colQty = -1; break;
+    // PlanSwift default: Description | Takeoff/Length/Qty | Units [| Area/Notes]
+    // ('Qty' here is PlanSwift's measured amount — the Units column beside it
+    // says whether it's MM/M/EA — NOT a piece count.)
+    if (r[0] === 'description' && (r[1] === 'takeoff' || r[1] === 'length' || r[1] === 'qty')) {
+      headerIdx = i; colType = 0; colLength = 1; colUnit = 2; colQty = -1;
+      colNotes = r.findIndex(c => /notes|note|area|location|zone/.test(c));
+      break;
     }
     const tIdx = r.findIndex(c => /type|section|name|member|profile|description|size/.test(c));
-    const lIdx = r.findIndex(c => /takeoff|length|len|mm/.test(c));
+    let   lIdx = r.findIndex(c => /takeoff|length|len|mm/.test(c));
     const uIdx = r.findIndex(c => /unit/.test(c));
-    const qIdx = r.findIndex(c => /qty|quantity|no\.|count|nr/.test(c));
+    let   qIdx = r.findIndex(c => /qty|quantity|no\.|count|nr/.test(c));
+    // Generic fallback for the same PlanSwift shape: no length/takeoff column,
+    // but a Qty column WITH a Units column beside it — that Qty is the
+    // measured takeoff value, so read it as the length column instead.
+    if (lIdx < 0 && qIdx >= 0 && uIdx >= 0) { lIdx = qIdx; qIdx = -1; }
     if (tIdx >= 0 && lIdx >= 0) {
       headerIdx = i; colType = tIdx; colLength = lIdx;
       colUnit = uIdx >= 0 ? uIdx : -1;
@@ -15829,6 +15839,7 @@ function groupPsRows(rows) {
   rows.forEach(r => {
     const existing = grouped.find(g =>
       g.type === r.type &&
+      (g._notes || '') === (r._notes || '') &&   // never merge across areas
       (r._unit === 'EA' ? true : Math.abs(g.length - r.length) <= 1) &&
       r._unit !== 'EA'
     );
@@ -15876,7 +15887,11 @@ function showPsPreview(source) {
     return;
   }
 
-  label.textContent = `${_psRows.length} rows found from ${source}`;
+  const areaNames = [...new Set(_psRows.map(r => r._notes || '').filter(Boolean))];
+  label.textContent = `${_psRows.length} rows found from ${source}` +
+    (areaNames.length
+      ? ` — ${areaNames.length} area${areaNames.length === 1 ? '' : 's'} detected: ${areaNames.join(', ')}`
+      : ' — no area column detected (all rows → Unspecified unless you pick an area below)');
   body.innerHTML = _psRows.map(r => {
     const isEA = r._unit === 'EA';
     const lenDisplay = isEA ? `<span style="color:var(--accent2)">${r.qty} EA</span>` : r.length + ' mm';
@@ -15886,6 +15901,7 @@ function showPsPreview(source) {
       <td style="padding:5px 8px;text-align:right;font-family:var(--font-mono)">${lenDisplay}</td>
       <td style="padding:5px 8px;text-align:right;font-family:var(--font-mono)">${qtyDisplay}</td>
       <td style="padding:5px 8px;text-align:right;font-family:var(--font-mono);color:${r.kgm?'var(--green)':'var(--muted)'}">${r.kgm ? r.kgm+' ✓' : '—'}</td>
+      <td style="padding:5px 8px;${r._notes ? '' : 'color:var(--muted);font-style:italic'}">${r._notes ? escHtml(r._notes) : 'Unspecified'}</td>
     </tr>`;
   }).join('');
 
