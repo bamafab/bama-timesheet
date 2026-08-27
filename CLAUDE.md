@@ -2405,3 +2405,32 @@ Both workflows trigger on push to `main`:
   the certified-vs-applied direction and the next-AFP consequence.
 - **Invoice due date from cert (2026-08-17)**: `Applications.certificate_final_payment_date` (migration `api/sql/add-afp-final-payment-date.sql`, ADD COLUMN → Function App restart). Cert modal has a "Final Payment Date" field; OCR extracts the notice's "Final Date for payment"; cert-confirm PUT stores it; `generate-invoice` uses it as `due_date` when present, else invoice date + client payment terms.
 - **Invoice VAT rate (2026-08-17)**: `Invoices.vat_rate` DECIMAL(5,2) NULL (migration `api/sql/add-invoice-vat-rate.sql`; NULL = legacy 20). Rate select (20/5/0) beside VAT Treatment in the invoice modal; `_invVatRate()` feeds both standard VAT and the CIS reverse-charge info figure in recalc + payload; PDF prints the actual rate on the VAT line and the Section 55A notice. AFP-generated invoices default to 20 (NULL) — flip the rate in the Draft edit. First use: INV0316 at 5%.
+
+## SDN edit: add lines to an existing note (2026-08-27)
+- **Problem it solves (Mateusz/Leszek)**: fixings were missing from the BOM when an
+  SDN was generated; adding them later forced a SECOND SDN. Now the ✎ Edit modal
+  on any SDN (project register / deliveries modal) carries an **ADD ITEMS TO THIS
+  NOTE** section listing every shippable BOM item across the project's jobs that
+  isn't already a line on that note — including anything added to the BOM after
+  the note was issued. Qty 0 = leave off; qty > 0 = goes on the same ref.
+- **Eligibility = generation rules, exactly**: fabricated marks from
+  `ready_for_despatch` capped at outstanding; fixings/consumables from
+  `ready_for_despatch` OR `on_site` with no cap (overship / top-up). Items
+  already on the note are excluded (edit their existing line instead — the server
+  rejects duplicates with that message).
+- **API**: `/api/sdn-amend` now also accepts `add_lines: [{ item_id, qty }]`
+  alongside `lines`. Either may be empty (not both). Additions run in the SAME
+  transaction: item rows locked (UPDLOCK), same-project guard via DrawingJobs,
+  duplicate-on-note guard, ledger INSERT into `JobBomDespatches` inheriting the
+  note's SharePoint file refs (TOP 1 existing ledger row) so the reissue
+  fast-path keeps working, then the identical `despatched_qty`/status bump as
+  generate-sdn. The at-least-one-line check counts additions. Register
+  line_count/total_qty recompute already sums by ref, so new rows are covered.
+- **Frontend** (`openSdnEditModal` / `confirmSdnEdit` in shared.js): candidates
+  fetched fresh per job (`_bomItemsByJob` cache bypassed — statuses may have
+  flipped since page load), grouped per job with the purple job header when
+  multi-job, fabricated/fixings sub-groups, `sdnEA_qty_<id>` inputs default 0.
+  Counts line reads "N lines · M pcs after edit (+K new)". After amend the
+  existing flow re-fetches `sdn-detail` and redraws/overwrites the PDF in place,
+  so added lines print on the same file automatically. `touchedJobs` refresh
+  includes added items' jobs.

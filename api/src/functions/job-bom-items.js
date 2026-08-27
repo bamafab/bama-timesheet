@@ -1137,10 +1137,21 @@ app.http('sdn-detail', {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// POST /api/sdn-amend — edit an existing SDN's line quantities
+// POST /api/sdn-amend — edit an existing SDN's line quantities and/or ADD
+// new BOM lines to the same note (forgot the fixings → put them on this SDN,
+// not a second one).
 //
-// Body: { ref: 'SDN-0013', lines: [{ ledger_id, qty }] }   qty >= 0; 0 removes
-//        the line from the note. Lines not mentioned keep their current qty.
+// Body: { ref: 'SDN-0013',
+//         lines:     [{ ledger_id, qty }],   -- qty >= 0; 0 removes the line.
+//                                               Lines not mentioned keep qty.
+//         add_lines: [{ item_id, qty }] }    -- BOM items NOT yet on this note;
+//                                               same eligibility as generation:
+//                                               fixings ship from
+//                                               ready_for_despatch/on_site with
+//                                               no cap, fabricated marks from
+//                                               ready_for_despatch capped at
+//                                               outstanding. All items must
+//                                               belong to the note's project.
 //
 // Per changed line, in ONE transaction:
 //   delta = newQty - oldQty
@@ -1169,7 +1180,17 @@ app.http('sdn-amend', {
             let edits = Array.isArray(body.lines) ? body.lines
                 .map(l => ({ ledger_id: parseInt(l.ledger_id), qty: parseInt(l.qty) }))
                 .filter(l => !isNaN(l.ledger_id) && !isNaN(l.qty) && l.qty >= 0) : [];
-            if (!edits.length) return badRequest('lines must be a non-empty array of {ledger_id, qty>=0}', request);
+            // Additions — collapse duplicate item_ids defensively (sum qty).
+            const addById = new Map();
+            if (Array.isArray(body.add_lines)) {
+                for (const a of body.add_lines) {
+                    const item_id = parseInt(a.item_id), qty = parseInt(a.qty);
+                    if (isNaN(item_id) || isNaN(qty) || qty < 1) continue;
+                    addById.set(item_id, (addById.get(item_id) || 0) + qty);
+                }
+            }
+            const adds = Array.from(addById, ([item_id, qty]) => ({ item_id, qty }));
+            if (!edits.length && !adds.length) return badRequest('Provide lines ({ledger_id, qty>=0}) and/or add_lines ({item_id, qty>=1})', request);
 
             const db = await getPool();
             const transaction = new sql.Transaction(db);
@@ -1208,11 +1229,78 @@ app.http('sdn-amend', {
                         return badRequest(`Line ${e.ledger_id}: ${e.qty} would take total despatched to ${newDespatched} of ${row.quantity} — fabricated marks can't be overshipped.`, request);
                     }
                 }
-                // The note must not end up empty.
+                // Validate additions against locked item rows.
+                let addRows = new Map();
+                if (adds.length) {
+                    const onNote = new Set(cur.recordset.map(r => r.bom_item_id));
+                    for (const a of adds) {
+                        if (onNote.has(a.item_id)) {
+                            await transaction.rollback();
+                            return badRequest(`Item ${a.item_id} is already on ${ref} — edit its existing line instead.`, request);
+                        }
+                    }
+                    const aParams = {};
+                    const aPh = adds.map((a, i) => { const k = `aid${i}`; aParams[k] = a.item_id; return `@${k}`; }).join(',');
+                    const aReq = new sql.Request(transaction);
+                    for (const [k, v] of Object.entries(aParams)) aReq.input(k, sql.Int, v);
+                    const aRes = await aReq.query(
+                        `SELECT id, job_id, status, quantity, despatched_qty, item_type
+                         FROM JobBomItems WITH (UPDLOCK)
+                         WHERE id IN (${aPh})`
+                    );
+                    if (aRes.recordset.length !== adds.length) {
+                        await transaction.rollback();
+                        return badRequest('One or more added BOM items not found', request);
+                    }
+                    addRows = new Map(aRes.recordset.map(r => [r.id, r]));
+
+                    // Same-project guard: every job touched (existing note +
+                    // additions) must resolve to ONE project.
+                    const jobIds = [...new Set([
+                        ...cur.recordset.map(r => r.job_id).filter(x => x != null),
+                        ...aRes.recordset.map(r => r.job_id).filter(x => x != null)
+                    ])];
+                    if (jobIds.length > 1) {
+                        const jparams = {};
+                        const jph = jobIds.map((id, i) => { const k = `jid${i}`; jparams[k] = id; return `@${k}`; }).join(',');
+                        const jReq = new sql.Request(transaction);
+                        for (const [k, v] of Object.entries(jparams)) jReq.input(k, sql.Int, v);
+                        const jrows = await jReq.query(
+                            `SELECT DISTINCT project_number FROM DrawingJobs WHERE id IN (${jph})`);
+                        if (jrows.recordset.length > 1) {
+                            await transaction.rollback();
+                            return badRequest('Added items must belong to the same project as the note', request);
+                        }
+                    }
+
+                    // Eligibility — identical rules to generate-sdn.
+                    for (const a of adds) {
+                        const row = addRows.get(a.item_id);
+                        const loose = row.item_type === 'fixing' || row.item_type === 'consumable';
+                        const outstanding = Math.max(0, (row.quantity || 0) - (row.despatched_qty || 0));
+                        if (loose) {
+                            if (row.status !== 'ready_for_despatch' && row.status !== 'on_site') {
+                                await transaction.rollback();
+                                return badRequest(`Fixing ${a.item_id} is '${row.status}' — must be ready for despatch (or already on site) to add.`, request);
+                            }
+                        } else {
+                            if (row.status !== 'ready_for_despatch') {
+                                await transaction.rollback();
+                                return badRequest(`Item ${a.item_id} is not ready_for_despatch — only items back from a supplier, or never needing one, can be added.`, request);
+                            }
+                            if (a.qty > outstanding) {
+                                await transaction.rollback();
+                                return badRequest(`Item ${a.item_id}: qty ${a.qty} exceeds outstanding ${outstanding}. Fabricated marks can't be overshipped.`, request);
+                            }
+                        }
+                    }
+                }
+
+                // The note must not end up empty (additions count).
                 const finalQty = new Map(cur.recordset.map(r => [r.ledger_id, r.qty]));
                 for (const e of edits) finalQty.set(e.ledger_id, e.qty);
                 const remaining = [...finalQty.values()].filter(q => q > 0);
-                if (!remaining.length) {
+                if (!remaining.length && !adds.length) {
                     await transaction.rollback();
                     return badRequest('An SDN must keep at least one line — quantities cannot all be zero.', request);
                 }
@@ -1250,6 +1338,65 @@ app.http('sdn-amend', {
                          WHERE id = @itemId`
                     );
                     if (up.recordset.length !== 1) throw new Error(`Item ${row.bom_item_id} vanished mid-amend`);
+                }
+
+                // Apply additions: ledger row per item (inheriting this note's
+                // SharePoint file refs so the reissue fast-path keeps working),
+                // then the same despatched_qty/status bump as generate-sdn.
+                if (adds.length) {
+                    const fRes = await new sql.Request(transaction)
+                        .input('ref', sql.NVarChar(32), ref)
+                        .query(`SELECT TOP 1 sharepoint_file_id, sharepoint_drive_id,
+                                             sharepoint_web_url, file_name
+                                FROM JobBomDespatches WHERE sdn_ref = @ref
+                                ORDER BY id ASC`);
+                    const f = fRes.recordset[0] || {};
+                    const createdBy = auth.email || auth.name || null;
+                    for (const a of adds) {
+                        const row = addRows.get(a.item_id);
+                        const loose = row.item_type === 'fixing' || row.item_type === 'consumable';
+
+                        const ledReq = new sql.Request(transaction);
+                        ledReq.input('itemId',   sql.Int,            a.item_id);
+                        ledReq.input('sdnRef',   sql.NVarChar(32),   ref);
+                        ledReq.input('qty',      sql.Int,            a.qty);
+                        ledReq.input('spFileId', sql.NVarChar(256),  f.sharepoint_file_id  || null);
+                        ledReq.input('spDriveId',sql.NVarChar(256),  f.sharepoint_drive_id || null);
+                        ledReq.input('spWebUrl', sql.NVarChar(1024), f.sharepoint_web_url  || null);
+                        ledReq.input('fileName', sql.NVarChar(256),  f.file_name || (ref + '.pdf'));
+                        ledReq.input('createdBy',sql.NVarChar(256),  createdBy);
+                        await ledReq.query(
+                            `INSERT INTO JobBomDespatches
+                                (bom_item_id, sdn_ref, qty, sharepoint_file_id,
+                                 sharepoint_drive_id, sharepoint_web_url, file_name, created_by)
+                             VALUES
+                                (@itemId, @sdnRef, @qty, @spFileId, @spDriveId, @spWebUrl, @fileName, @createdBy)`
+                        );
+
+                        const allowed = loose ? `('ready_for_despatch','on_site')` : `('ready_for_despatch')`;
+                        const upReq = new sql.Request(transaction);
+                        upReq.input('itemId',   sql.Int,            a.item_id);
+                        upReq.input('addQty',   sql.Int,            a.qty);
+                        upReq.input('spFileId', sql.NVarChar(256),  f.sharepoint_file_id  || null);
+                        upReq.input('spDriveId',sql.NVarChar(256),  f.sharepoint_drive_id || null);
+                        upReq.input('spWebUrl', sql.NVarChar(1024), f.sharepoint_web_url  || null);
+                        upReq.input('fileName', sql.NVarChar(256),  f.file_name || (ref + '.pdf'));
+                        const up = await upReq.query(
+                            `UPDATE JobBomItems
+                             SET despatched_qty      = despatched_qty + @addQty,
+                                 status              = CASE WHEN despatched_qty + @addQty >= quantity
+                                                            THEN 'on_site' ELSE status END,
+                                 despatched_at       = CASE WHEN despatched_qty + @addQty >= quantity
+                                                            THEN COALESCE(despatched_at, SYSUTCDATETIME()) ELSE despatched_at END,
+                                 sharepoint_file_id  = @spFileId,
+                                 sharepoint_drive_id = @spDriveId,
+                                 sharepoint_web_url  = @spWebUrl,
+                                 file_name           = @fileName
+                             OUTPUT INSERTED.id
+                             WHERE id = @itemId AND status IN ${allowed}`
+                        );
+                        if (up.recordset.length !== 1) throw new Error(`Item ${a.item_id} changed status concurrently — please refresh.`);
+                    }
                 }
 
                 // Recompute the register row for this ref.

@@ -15315,8 +15315,10 @@ async function confirmSiteDn() {
 
 // ── SDN edit & reissue ───────────────────────────────────────────────────────
 // Any SDN with despatch-ledger rows (JobBomDespatches) can be edited after the
-// fact: change per-line quantities, drop lines entirely, correct the delivery
-// details, and reissue the PDF OVER THE SAME SharePoint file (same ref, same
+// fact: change per-line quantities, drop lines entirely, ADD eligible BOM
+// items that weren't on the original note (forgot the fixings → they go on
+// THIS SDN, not a second one), correct the delivery details, and reissue the
+// PDF OVER THE SAME SharePoint file (same ref, same
 // filename — anyone holding the old link sees the corrected note). The server
 // (/api/sdn-amend) adjusts despatched_qty and item status by the exact delta
 // in one transaction, so partial-despatch maths and the SDN queue stay right.
@@ -15368,6 +15370,70 @@ async function openSdnEditModal(ref) {
   if (listEl) listEl.innerHTML =
     `<div style="border:1px solid var(--border);border-radius:8px;overflow:hidden;max-height:340px;overflow-y:auto">${_sdnEdit.lines.map(rowHtml).join('')}</div>`;
 
+  // ADD candidates: everything shippable across the project's jobs that isn't
+  // already a line on this note — same eligibility as generation (fabricated:
+  // ready_for_despatch with outstanding; fixings: ready_for_despatch or
+  // on_site, no cap). Anything added on the BOM tab AFTER the note was issued
+  // shows up here, so the fix lands on the SAME SDN.
+  const addEl = document.getElementById('sdnEditAddList');
+  const addWrap = document.getElementById('sdnEditAddSection');
+  _sdnEdit.addCands = [];
+  if (addEl) {
+    addEl.innerHTML = '<div style="color:var(--subtle);font-size:12px;padding:8px 12px">Loading BOM…</div>';
+    try {
+      const onNote = new Set(_sdnEdit.lines.map(l => parseInt(l.id)));
+      const outstandingOf = i => Math.max(0, (Number(i.quantity) || 0) - (Number(i.despatched_qty) || 0));
+      const perJob = [];
+      for (const j of _dnProjectJobs()) {
+        const jid = parseInt(j.id);
+        // Bypass the per-job cache: the note may have flipped statuses since load.
+        delete _bomItemsByJob[jid];
+        const all = await _dnFetchJobItems(jid);
+        const nm = _dnJobName(jid);
+        const tag = i => ({ ...i, _jobId: jid, _jobName: nm });
+        const fab = all.filter(i => !onNote.has(parseInt(i.id)) && !isLoose(i) && i.status === 'ready_for_despatch' && outstandingOf(i) > 0).map(tag);
+        const fix = all.filter(i => !onNote.has(parseInt(i.id)) &&  isLoose(i) && (i.status === 'ready_for_despatch' || i.status === 'on_site')).map(tag);
+        if (fab.length || fix.length) perJob.push({ nm, fab, fix });
+      }
+      _sdnEdit.addCands = perJob.flatMap(g => [...g.fab, ...g.fix]);
+      if (!_sdnEdit.addCands.length) {
+        if (addWrap) addWrap.style.display = 'none';
+      } else {
+        if (addWrap) addWrap.style.display = '';
+        const multiJob = perJob.length > 1;
+        const groupHead = (label) => `<div style="padding:6px 12px;font-size:10px;color:var(--subtle);text-transform:uppercase;letter-spacing:.05em;background:rgba(255,255,255,.03);border-bottom:1px solid var(--border)">${label}</div>`;
+        const jobHead = (label) => `<div style="padding:6px 12px;font-size:10px;color:#a78bfa;text-transform:uppercase;letter-spacing:.05em;background:rgba(139,92,246,.08);border-bottom:1px solid var(--border);font-weight:700">${escapeHtml(label)}</div>`;
+        const addRow = (it) => {
+          const out = outstandingOf(it);
+          const loose = isLoose(it);
+          const maxAttr = loose ? '' : `max="${out}"`;
+          const mark = it.source === 'assembly' ? (it.source_assembly_mark || '') : '';
+          const outLabel = out > 0
+            ? `<span style="font-size:11px;color:var(--subtle);white-space:nowrap">out: <b style="color:var(--text)">${out}</b></span>`
+            : `<span style="font-size:11px;color:#3ecf8e;white-space:nowrap">complete · can top up</span>`;
+          return `<div style="display:flex;align-items:center;gap:10px;padding:8px 12px;border-bottom:1px solid var(--border)" id="sdnEA_row_${it.id}">
+            <span style="font-family:var(--font-mono);font-size:12px;color:var(--text);flex:1">${mark ? `<b>${escapeHtml(mark)}</b> · ` : ''}${escapeHtml(it.description || '')}</span>
+            ${outLabel}
+            <input type="number" min="0" ${maxAttr} step="1" value="0" placeholder="0"
+                   class="sdnEA-qty" id="sdnEA_qty_${it.id}" data-id="${it.id}" data-loose="${loose ? 1 : 0}" data-out="${out}"
+                   oninput="sdnEditUpdateCount()"
+                   style="width:64px;text-align:right;background:var(--bg-darker);border:1px solid var(--border);color:var(--text);font-family:var(--font-mono);font-size:12px;padding:4px 6px;border-radius:5px">
+          </div>`;
+        };
+        let html = '<div style="border:1px solid var(--border);border-radius:8px;overflow:hidden;max-height:280px;overflow-y:auto">';
+        for (const g of perJob) {
+          if (multiJob) html += jobHead(g.nm);
+          if (g.fab.length) html += groupHead('Fabricated items') + g.fab.map(addRow).join('');
+          if (g.fix.length) html += groupHead('&#128296; Fixings &amp; loose items') + g.fix.map(addRow).join('');
+        }
+        html += '</div>';
+        addEl.innerHTML = html;
+      }
+    } catch (e) {
+      addEl.innerHTML = `<div style="color:var(--subtle);font-size:12px;padding:8px 12px">Could not load addable items: ${escapeHtml(e.message)}</div>`;
+    }
+  }
+
   // Delivery details: not persisted with the note, so prefill from the Job
   // Sheet exactly like generation — fix anything here before reissuing.
   const r = _jobSheetResolved(proj);
@@ -15399,7 +15465,7 @@ function closeSdnEditModal() {
 
 function sdnEditUpdateCount() {
   if (!_sdnEdit) return;
-  let lines = 0, pcs = 0;
+  let lines = 0, pcs = 0, added = 0;
   for (const l of _sdnEdit.lines) {
     const el = document.getElementById(`sdnE_qty_${l.ledger_id}`);
     const q = parseInt(el?.value) || 0;
@@ -15407,8 +15473,15 @@ function sdnEditUpdateCount() {
     if (row) row.style.opacity = q > 0 ? '1' : '.4';
     if (q > 0) { lines++; pcs += q; }
   }
+  for (const c of (_sdnEdit.addCands || [])) {
+    const el = document.getElementById(`sdnEA_qty_${c.id}`);
+    const q = parseInt(el?.value) || 0;
+    const row = document.getElementById(`sdnEA_row_${c.id}`);
+    if (row) row.style.opacity = q > 0 ? '1' : '.55';
+    if (q > 0) { lines++; added++; pcs += q; }
+  }
   const el = document.getElementById('sdnEditSelCount');
-  if (el) el.textContent = `${lines} line${lines === 1 ? '' : 's'} · ${pcs} pcs after edit`;
+  if (el) el.textContent = `${lines} line${lines === 1 ? '' : 's'} · ${pcs} pcs after edit${added ? ` (+${added} new)` : ''}`;
   const btn = document.getElementById('sdnEditConfirmBtn');
   if (btn) {
     const ok = lines > 0;
@@ -15427,7 +15500,19 @@ async function confirmSdnEdit() {
     if (isNaN(q) || q < 0) { toast('Quantities must be 0 or more (0 removes the line).', 'error'); return; }
     edits.push({ ledger_id: l.ledger_id, qty: q, _line: l });
   }
-  if (!edits.some(e => e.qty > 0)) { toast('An SDN must keep at least one line.', 'error'); return; }
+  // Additions: any candidate row with qty > 0. Client-side cap check for
+  // fabricated marks mirrors the server rule (fixings uncapped).
+  const add_lines = [];
+  for (const c of (_sdnEdit.addCands || [])) {
+    const el = document.getElementById(`sdnEA_qty_${c.id}`);
+    const q = parseInt(el?.value) || 0;
+    if (q < 1) continue;
+    const loose = c.item_type === 'fixing' || c.item_type === 'consumable';
+    const out = Math.max(0, (Number(c.quantity) || 0) - (Number(c.despatched_qty) || 0));
+    if (!loose && q > out) { toast(`${c.description || ('Item ' + c.id)}: max ${out} outstanding — fabricated marks can't be overshipped.`, 'error'); return; }
+    add_lines.push({ item_id: parseInt(c.id), qty: q, _jobId: c._jobId });
+  }
+  if (!edits.some(e => e.qty > 0) && !add_lines.length) { toast('An SDN must keep at least one line.', 'error'); return; }
 
   const btn = document.getElementById('sdnEditConfirmBtn');
   btn.disabled = true; btn.style.opacity = '.5';
@@ -15435,7 +15520,9 @@ async function confirmSdnEdit() {
   try {
     // 1. Amend the ledger + item quantities server-side (one transaction).
     const amendRes = await api.post('/api/sdn-amend', {
-      ref, lines: edits.map(e => ({ ledger_id: e.ledger_id, qty: e.qty }))
+      ref,
+      lines: edits.map(e => ({ ledger_id: e.ledger_id, qty: e.qty })),
+      add_lines: add_lines.map(a => ({ item_id: a.item_id, qty: a.qty }))
     });
 
     // 2. Re-fetch the note from data — weights redraw from CURRENT assembly
@@ -15518,7 +15605,10 @@ async function confirmSdnEdit() {
     // 5. Refresh everything the amend touched.
     const pid = parseInt(proj.dbId);
     delete _dnRegCache[pid];
-    const touchedJobs = [...new Set(items.map(i => i._jobId).filter(Boolean))];
+    const touchedJobs = [...new Set([
+      ...items.map(i => i._jobId),
+      ...add_lines.map(a => a._jobId)
+    ].filter(Boolean))];
     for (const jid of touchedJobs) {
       delete _bomItemsByJob[jid];
       if (currentJob && parseInt(currentJob.id) === jid) await loadJobBomItems(jid);
