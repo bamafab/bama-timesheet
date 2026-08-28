@@ -1,3 +1,9 @@
 node_modules/
 package-lock.json
 package.json
+
+# Takeoff fixtures: real customer geometry, local-only
+tests/fixtures/*
+!tests/fixtures/README.md
+tests/node_modules/
+tests/package*.json
