@@ -104,19 +104,30 @@
           if (!(u.UnitType && u.UnitType.value === 'LENGTHUNIT')) continue;
           var si = siLengthFactorMM(u);
           if (si != null) return si; // plain IfcSIUnit LENGTHUNIT
-          // IfcConversionBasedUnit: factor = ValueComponent × base-unit factor
-          if (u.ConversionFactor && u.ConversionFactor.value != null) {
-            var mw = api.GetLine(modelID, u.ConversionFactor.value);
+          // IfcConversionBasedUnit: factor = ValueComponent × base-unit factor.
+          // ValueComponent is an IfcMeasureWithUnit wrapped measure — web-ifc
+          // returns it as {type,value} (sometimes nested one level deeper).
+          // The base unit is usually an IfcSIUnit, but CATIA has been seen to
+          // chain conversion units, so recurse one level if needed.
+          var convFactor = function (unit, depth) {
+            if (!unit || depth > 3) return null;
+            var si = siLengthFactorMM(unit);
+            if (si != null) return si;
+            if (!(unit.ConversionFactor && unit.ConversionFactor.value != null)) return null;
+            var mw = api.GetLine(modelID, unit.ConversionFactor.value);
             var vc = mw && mw.ValueComponent;
+            while (vc && vc.value != null && typeof vc.value === 'object') vc = vc.value;
             var val = (vc && vc.value != null) ? Number(vc.value) : NaN;
             var base = 1;
             if (mw && mw.UnitComponent && mw.UnitComponent.value != null) {
               var bu = api.GetLine(modelID, mw.UnitComponent.value);
-              var bf = siLengthFactorMM(bu);
+              var bf = convFactor(bu, depth + 1);
               if (bf != null) base = bf;
             }
-            if (isFinite(val) && val > 0) return val * base;
-          }
+            return (isFinite(val) && val > 0) ? val * base : null;
+          };
+          var cf = convFactor(u, 0);
+          if (cf != null) return cf;
         }
       }
     } catch (e) { /* fall through to the plain SIUnit scan */ }
@@ -174,10 +185,167 @@
   // (brackets, plate assemblies). Volume is the exact signed-tetrahedron sum
   // over the triangulated mesh (divergence theorem) — deterministic geometry,
   // nothing estimated. Mass = volume × 7850 kg/m³ (structural steel).
+  //
+  // VOLUME CORRECTNESS (production bug, 2026-08-28): surface-style exports
+  // (CATIA/3DEXPERIENCE shell models) arrive as MANY separate surface patches
+  // per physical part. Taking |volume| per patch/geometry inflates the total
+  // massively (P2073 CATIA file: 13.5 t reported vs 0.79 t real, ~17×).
+  // Correct approach, implemented in meshComponents():
+  //   1. stitch vertices at 1e-6 m tolerance across ALL geometries of the
+  //      element (surface patches share boundary vertices),
+  //   2. union-find triangles into connected components (= physical shells),
+  //   3. repair triangle winding per component (BFS across shared edges — CAD
+  //      exports routinely flip normals patch-to-patch),
+  //   4. SIGNED tetra sum per component, abs() only at component level.
+  //      NEVER abs per face/triangle.
+  // Components with boundary edges (an edge used by exactly one triangle) are
+  // OPEN shells — their enclosed volume is not well-defined, so they feed the
+  // geometry-quality stats and, above 20% of total volume, flag the whole
+  // result LOW CONFIDENCE.
   var STEEL_KG_PER_MM3 = 7.85e-6;
+  var STITCH_TOL_M = 1e-6; // vertex stitching tolerance, metres
+
+  // Pure geometry: triangle soup → connected components with signed volume.
+  // positions: flat [x,y,z,...] in model units; indices: flat triangle indices
+  // into positions; tol: stitch tolerance in the SAME units as positions.
+  // Returns [{ vol, open, mn:[x,y,z], mx:[x,y,z], tris }] — vol is |signed sum|
+  // per component, in positions-units³. Exported as IFCTakeoff._meshComponents
+  // so the node test can hit it with a synthetic flipped-normal cube.
+  function meshComponents(positions, indices, tol) {
+    if (!indices.length) return [];
+    tol = tol > 0 ? tol : 1e-9;
+
+    // 1) Stitch: quantise to a tol grid, searching the 27 neighbouring cells
+    // so near-boundary vertices still merge. canon[i] = canonical vertex id.
+    var cell = {};              // "qx|qy|qz" → [canonical ids in that cell]
+    var canonPos = [];          // canonical id → [x,y,z] (first-seen coords)
+    var vCount = positions.length / 3;
+    var canonOf = new Int32Array(vCount);
+    function q(v) { return Math.round(v / tol); }
+    for (var i = 0; i < vCount; i++) {
+      var x = positions[i * 3], y = positions[i * 3 + 1], z = positions[i * 3 + 2];
+      var qx = q(x), qy = q(y), qz = q(z);
+      var found = -1;
+      for (var dx = -1; dx <= 1 && found < 0; dx++)
+        for (var dy = -1; dy <= 1 && found < 0; dy++)
+          for (var dz = -1; dz <= 1 && found < 0; dz++) {
+            var ids = cell[(qx + dx) + '|' + (qy + dy) + '|' + (qz + dz)];
+            if (!ids) continue;
+            for (var c = 0; c < ids.length; c++) {
+              var p = canonPos[ids[c]];
+              if (Math.abs(p[0] - x) <= tol && Math.abs(p[1] - y) <= tol && Math.abs(p[2] - z) <= tol) {
+                found = ids[c]; break;
+              }
+            }
+          }
+      if (found < 0) {
+        found = canonPos.length;
+        canonPos.push([x, y, z]);
+        var k0 = qx + '|' + qy + '|' + qz;
+        (cell[k0] || (cell[k0] = [])).push(found);
+      }
+      canonOf[i] = found;
+    }
+
+    // 2) Remap triangles to canonical ids; drop degenerates.
+    var tris = []; // [a,b,c] canonical
+    for (var t = 0; t < indices.length; t += 3) {
+      var a = canonOf[indices[t]], b = canonOf[indices[t + 1]], c2 = canonOf[indices[t + 2]];
+      if (a === b || b === c2 || a === c2) continue;
+      tris.push([a, b, c2]);
+    }
+    if (!tris.length) return [];
+
+    // 3) Union-find over canonical vertex ids, joined per triangle.
+    var uf = new Int32Array(canonPos.length);
+    for (var u = 0; u < uf.length; u++) uf[u] = u;
+    function find(n) { while (uf[n] !== n) { uf[n] = uf[uf[n]]; n = uf[n]; } return n; }
+    function union(m, n) { m = find(m); n = find(n); if (m !== n) uf[m] = n; }
+    for (var t2 = 0; t2 < tris.length; t2++) { union(tris[t2][0], tris[t2][1]); union(tris[t2][1], tris[t2][2]); }
+
+    // Group triangle indices per component root.
+    var comps = {}; // root → [tri index]
+    for (var t3 = 0; t3 < tris.length; t3++) {
+      var r = find(tris[t3][0]);
+      (comps[r] || (comps[r] = [])).push(t3);
+    }
+
+    // 4) Per component: edge map → winding repair (BFS) → signed volume.
+    var out = [];
+    Object.keys(comps).forEach(function (root) {
+      var list = comps[root];
+      // Edge map: undirected key → [{tri (local idx), dir(+1 if a<b order)}]
+      var edges = {};
+      function edgeKey(a, b) { return a < b ? a + '_' + b : b + '_' + a; }
+      for (var li = 0; li < list.length; li++) {
+        var tr = tris[list[li]];
+        for (var e = 0; e < 3; e++) {
+          var va = tr[e], vb = tr[(e + 1) % 3];
+          var k = edgeKey(va, vb);
+          (edges[k] || (edges[k] = [])).push({ li: li, fwd: va < vb });
+        }
+      }
+      // Winding repair: BFS; across a 2-manifold edge the two triangles must
+      // traverse it in OPPOSITE directions. flip[li] toggles a triangle.
+      var flip = new Uint8Array(list.length);
+      var seen = new Uint8Array(list.length);
+      var open = false;
+      // Components can have several BFS islands if joined only via a vertex.
+      for (var seed = 0; seed < list.length; seed++) {
+        if (seen[seed]) continue;
+        seen[seed] = 1;
+        var queue = [seed];
+        while (queue.length) {
+          var cur = queue.pop();
+          var trc = tris[list[cur]];
+          for (var e2 = 0; e2 < 3; e2++) {
+            var va2 = trc[e2], vb2 = trc[(e2 + 1) % 3];
+            var uses = edges[edgeKey(va2, vb2)];
+            if (uses.length === 1) { open = true; continue; }
+            if (uses.length !== 2) continue; // non-manifold — don't propagate
+            var me = null, other = null;
+            for (var uu = 0; uu < 2; uu++) { if (uses[uu].li === cur && me == null) me = uses[uu]; else other = uses[uu]; }
+            if (!other || seen[other.li]) continue;
+            // Effective direction after flips: fwd XOR flip
+            var myDir = me.fwd !== !!flip[cur];
+            var otDir = other.fwd !== !!flip[other.li];
+            if (myDir === otDir) flip[other.li] = 1; // must be opposite
+            seen[other.li] = 1;
+            queue.push(other.li);
+          }
+        }
+      }
+      // Any boundary edge anywhere in the component → open shell.
+      if (!open) { Object.keys(edges).some(function (k2) { if (edges[k2].length === 1) { open = true; return true; } return false; }); }
+
+      var vol = 0;
+      var mn = [Infinity, Infinity, Infinity], mx = [-Infinity, -Infinity, -Infinity];
+      for (var li2 = 0; li2 < list.length; li2++) {
+        var tr2 = tris[list[li2]];
+        var A = canonPos[tr2[0]], B = canonPos[tr2[1]], C = canonPos[tr2[2]];
+        if (flip[li2]) { var tmp = B; B = C; C = tmp; }
+        vol += (A[0] * (B[1] * C[2] - B[2] * C[1])
+              - A[1] * (B[0] * C[2] - B[2] * C[0])
+              + A[2] * (B[0] * C[1] - B[1] * C[0])) / 6;
+        for (var p2 = 0; p2 < 3; p2++) {
+          var pt2 = p2 === 0 ? A : (p2 === 1 ? B : C);
+          for (var k3 = 0; k3 < 3; k3++) {
+            if (pt2[k3] < mn[k3]) mn[k3] = pt2[k3];
+            if (pt2[k3] > mx[k3]) mx[k3] = pt2[k3];
+          }
+        }
+      }
+      out.push({ vol: Math.abs(vol), open: open, mn: mn, mx: mx, tris: list.length });
+    });
+    return out;
+  }
 
   function solidPartsOf(api, modelID, expressID, unitMM) {
-    var parts = [];
+    // Gather ONE world-space triangle soup across ALL geometries of the
+    // element (a CATIA shell arrives as dozens of surface-patch geometries —
+    // they must be stitched together, never volumed one by one).
+    var positions = [];
+    var indices = [];
     api.StreamMeshes(modelID, [expressID], function (mesh) {
       var g = mesh.geometries;
       for (var i = 0; i < g.size(); i++) {
@@ -186,37 +354,36 @@
         var verts = api.GetVertexArray(geo.GetVertexData(), geo.GetVertexDataSize());
         var idx = api.GetIndexArray(geo.GetIndexData(), geo.GetIndexDataSize());
         var m = pg.flatTransformation;
-        function tx(vi) {
-          var x = verts[vi * 6], y = verts[vi * 6 + 1], z = verts[vi * 6 + 2];
-          return [
+        var base = positions.length / 3;
+        for (var v = 0; v < verts.length; v += 6) { // x,y,z,nx,ny,nz
+          var x = verts[v], y = verts[v + 1], z = verts[v + 2];
+          positions.push(
             m[0] * x + m[4] * y + m[8]  * z + m[12],
             m[1] * x + m[5] * y + m[9]  * z + m[13],
             m[2] * x + m[6] * y + m[10] * z + m[14]
-          ];
+          );
         }
-        var vol = 0;
-        var mn = [Infinity, Infinity, Infinity], mx = [-Infinity, -Infinity, -Infinity];
-        for (var t = 0; t < idx.length; t += 3) {
-          var a = tx(idx[t]), b = tx(idx[t + 1]), c = tx(idx[t + 2]);
-          vol += (a[0] * (b[1] * c[2] - b[2] * c[1])
-                - a[1] * (b[0] * c[2] - b[2] * c[0])
-                + a[2] * (b[0] * c[1] - b[1] * c[0])) / 6;
-          for (var p = 0; p < 3; p++) {
-            var pt = p === 0 ? a : (p === 1 ? b : c);
-            for (var k = 0; k < 3; k++) {
-              if (pt[k] < mn[k]) mn[k] = pt[k];
-              if (pt[k] > mx[k]) mx[k] = pt[k];
-            }
-          }
-        }
-        var u = unitMM || 1;
-        var volMM3 = Math.abs(vol) * u * u * u;
-        if (!isFinite(volMM3) || volMM3 <= 0) continue;
-        var dims = [(mx[0] - mn[0]) * u, (mx[1] - mn[1]) * u, (mx[2] - mn[2]) * u]
-          .sort(function (x, y) { return y - x; }); // [L, W, T] descending
-        parts.push({ kg: volMM3 * STEEL_KG_PER_MM3, volMM3: volMM3, dims: dims });
+        for (var t = 0; t < idx.length; t++) indices.push(base + idx[t]);
       }
     });
+    if (!indices.length) return [];
+
+    var u = unitMM || 1;
+    var tolModel = (STITCH_TOL_M * 1000) / u; // 1e-6 m expressed in model units
+    var comps = meshComponents(positions, indices, tolModel);
+
+    var parts = [];
+    for (var c = 0; c < comps.length; c++) {
+      var comp = comps[c];
+      var volMM3 = comp.vol * u * u * u;
+      if (!isFinite(volMM3) || volMM3 <= 0) continue;
+      var dims = [
+        (comp.mx[0] - comp.mn[0]) * u,
+        (comp.mx[1] - comp.mn[1]) * u,
+        (comp.mx[2] - comp.mn[2]) * u
+      ].sort(function (x, y) { return y - x; }); // [L, W, T] descending
+      parts.push({ kg: volMM3 * STEEL_KG_PER_MM3, volMM3: volMM3, dims: dims, open: comp.open });
+    }
     return parts;
   }
 
@@ -357,6 +524,7 @@
       var partsMode = false;
       var partsCount = 0;
       var totalKg = 0;
+      var shellsClosed = 0, shellsOpen = 0, openKg = 0;
       if (!rows.length) {
         var partClasses = [
           WebIFC.IFCBUILDINGELEMENTPROXY, WebIFC.IFCPLATE,
@@ -379,6 +547,7 @@
               partsMode = true;
               partsCount++;
               totalKg += part.kg;
+              if (part.open) { shellsOpen++; openKg += part.kg; } else { shellsClosed++; }
               var kgEach = Math.round(part.kg * 100) / 100;
               var dimKey = part.dims.map(function (v) { return Math.round(v * 2) / 2; }).join('x');
               var key = elName + '|' + dimKey + '|' + kgEach;
@@ -417,10 +586,20 @@
         parts: partsCount,
         uniqueParts: partsMode ? rows.length : 0,
         totalKg: partsMode ? Math.round(totalKg * 10) / 10 : null,
+        // Geometry quality (parts mode): closed vs open shells, and the share
+        // of total volume that came from OPEN shells. Above 20% open the whole
+        // takeoff is flagged LOW CONFIDENCE — open-shell volume is a best
+        // effort, not a watertight measurement.
+        geometryQuality: partsMode ? {
+          shellsClosed: shellsClosed,
+          shellsOpen: shellsOpen,
+          openVolumePct: totalKg > 0 ? Math.round((openKg / totalKg) * 1000) / 10 : 0,
+          lowConfidence: totalKg > 0 && (openKg / totalKg) > 0.20
+        } : null,
         levels: Array.from(new Set(rows.map(function (r) { return r._notes; }).filter(Boolean)))
       }
     };
   }
 
-  global.IFCTakeoff = { parseIFC: parseIFC, loadWebIfc: loadWebIfc, _sectionFromProps: sectionFromProps, _tidyLevel: tidyLevel };
+  global.IFCTakeoff = { parseIFC: parseIFC, loadWebIfc: loadWebIfc, _sectionFromProps: sectionFromProps, _tidyLevel: tidyLevel, _meshComponents: meshComponents };
 })(typeof window !== 'undefined' ? window : this);
