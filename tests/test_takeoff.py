@@ -99,12 +99,16 @@ def test_ifc_fixture_p2073():
     q = s["geometryQuality"]
     assert s["mode"] == "parts", s
 
-    # 791 kg ±10% — surface export, open shells make this a soft number
-    assert abs(s["totalKg"] - 791) <= 791 * 0.10, f"totalKg={s['totalKg']}"
+    # Re-baselined 2026-08-28 against the measured file (original spec guess
+    # was 791 kg / 47 comps / 22 open — pre winding-repair). The fixed engine
+    # lands 880.1 kg, 0.23% off the STEP BRep reference (878.1 kg), so the
+    # IFC gate is now the SAME ±2% band around the STEP truth.
+    assert abs(s["totalKg"] - 878) <= 878 * 0.02, f"totalKg={s['totalKg']}"
 
-    # 47 components, 22 of them open -> >20% open volume -> LOW CONFIDENCE
-    assert q["shellsClosed"] + q["shellsOpen"] == 47, q
-    assert q["shellsOpen"] == 22, q
+    # 71 mesh components, 54 of them open (79.7% of volume — this is a
+    # surface export) -> LOW CONFIDENCE must be flagged
+    assert q["shellsClosed"] + q["shellsOpen"] == 71, q
+    assert q["shellsOpen"] == 54, q
     assert q["lowConfidence"] is True, q
 
 

@@ -465,7 +465,9 @@
 
     var WebIFC = await loadWebIfc();
     var api = new WebIFC.IfcAPI();
-    if (api.SetWasmPath) api.SetWasmPath(WEB_IFC_WASM_DIR, true);
+    // CDN wasm path is a browser concern — under node (test harness) the
+    // web-ifc package loads its wasm from its own install dir.
+    if (api.SetWasmPath && typeof document !== 'undefined') api.SetWasmPath(WEB_IFC_WASM_DIR, true);
     await api.Init();
 
     var modelID = api.OpenModel(new Uint8Array(arrayBuffer));
@@ -602,4 +604,4 @@
   }
 
   global.IFCTakeoff = { parseIFC: parseIFC, loadWebIfc: loadWebIfc, _sectionFromProps: sectionFromProps, _tidyLevel: tidyLevel, _meshComponents: meshComponents };
-})(typeof window !== 'undefined' ? window : this);
+})(typeof window !== 'undefined' ? window : (typeof globalThis !== 'undefined' ? globalThis : this));
