@@ -10299,7 +10299,7 @@ function renderStaffList() {
   }
 
   container.innerHTML = `
-    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px">
+    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(390px,1fr));gap:12px">
       ${employees.map(emp => {
         const staffType = emp.staffType || 'workshop';
         const erpRole = emp.erpRole || 'workshop';
@@ -10391,7 +10391,7 @@ function renderStaffList() {
               <div style="font-size:11px;color:var(--subtle);margin-top:2px">${emp.hasPin ? '&#128274; PIN set' : '&#128275; No PIN'}</div>
               <div style="font-size:11px;color:var(--muted);margin-top:2px">&#127959; ${emp.annualDays||20}d/yr ${emp.carryoverDays ? '+ '+emp.carryoverDays+'d carry' : ''}</div>
               ${emp.startDate ? `<div style="font-size:11px;color:var(--subtle);margin-top:2px">Started: ${emp.startDate}</div>` : ''}
-              <div style="display:flex;gap:6px;margin-top:8px">
+              <div style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap">
                 <button class="tiny-btn" style="background:var(--surface);color:var(--muted);border:1px solid var(--border)"
                   onclick="editEmployee('${emp.id}')">&#9998; Edit</button>
                 <button class="tiny-btn" style="background:var(--surface);color:var(--muted);border:1px solid var(--border)"
@@ -47001,7 +47001,7 @@ function renderDocsTab() {
   if (!root.dataset.built) {
     root.dataset.built = '1';
     root.innerHTML = `
-      <div style="max-width:1300px">
+      <div>
         <div id="docAlertStrip" style="display:none;cursor:pointer;background:#3b1a1a;border:1px solid var(--red);border-radius:8px;padding:8px 14px;font-size:12.5px;color:#f0b4b4;margin-bottom:12px"></div>
 
         <!-- Policy Studio: ERP-owned policies, signed on the document -->
@@ -49285,7 +49285,7 @@ async function renderQmsTab() {
   // the mill test certs dragged onto the job (Traceability ▸ Inspection & NDT),
   // not a hand-keyed form. Hide it from the picker; existing submissions remain.
   _qmsForms = (_qmsForms || []).filter(f => !/MAT\s*001/i.test(f.form_code || ''));
-  root.innerHTML = `<div style="max-width:900px">
+  root.innerHTML = `<div>
     <h3 style="margin:0 0 4px">📋 QMS Forms & Check Sheets</h3>
     <p style="font-size:12px;color:var(--muted);margin:0 0 14px;line-height:1.6">
       Digital versions of the FPC check sheets — fill in on any device, the signed-off PDF files itself to
