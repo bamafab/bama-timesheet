@@ -7,3 +7,7 @@ tests/fixtures/*
 !tests/fixtures/README.md
 tests/node_modules/
 tests/package*.json
+
+# Python bytecode
+__pycache__/
+*.pyc
