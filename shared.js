@@ -28445,8 +28445,10 @@ async function exportCvrPDF() {
 // ═══════════════════════════════════════════════════════════════════════════
 // PAYMENTS DUE — unpaid supplier invoices to pay by a chosen date
 // Facts come from /api/supplier-invoices?status=unpaid; all bucketing/summing
-// is plain arithmetic here. Two toggles (both off by default): include overdue,
-// include direct debits. Definitions live in the panel Help.
+// is plain arithmetic here. Four toggles (all off by default): include overdue,
+// include direct debits, include labour & subcontractors (rows the Labour &
+// Subcontractor Payments tab owns — CIS invoices + is_labour_supplier agencies),
+// include Bama South West (intercompany). Definitions live in the panel Help.
 // ═══════════════════════════════════════════════════════════════════════════
 let _pdrRows = null;   // raw unpaid supplier invoices (cached)
 let _pdrMeta = null;   // { byDate, overdue, dd } snapshot of last render
@@ -28472,14 +28474,18 @@ function pdrPreset(kind) {
 
 // Filtered + grouped view of the cached rows against the current controls.
 function _pdrData() {
-  const byDate  = document.getElementById('pdrByDate')?.value || null;
-  const overdue = !!document.getElementById('pdrOverdue')?.checked;
-  const inclDd  = !!document.getElementById('pdrDd')?.checked;
-  const today   = new Date().toISOString().slice(0, 10);
+  const byDate     = document.getElementById('pdrByDate')?.value || null;
+  const overdue    = !!document.getElementById('pdrOverdue')?.checked;
+  const inclDd     = !!document.getElementById('pdrDd')?.checked;
+  const inclLabour = !!document.getElementById('pdrLabour')?.checked;
+  const inclBamaSw = !!document.getElementById('pdrBamaSw')?.checked;
+  const today      = new Date().toISOString().slice(0, 10);
 
   const open = (_pdrRows || []).filter(inv => {
     if (inv.paid_at) return false;
     if (Number(inv.gross || 0) <= 0.005) return false;
+    if (!inclLabour && _lprIsLabour(inv)) return false;   // labour/subbies live in the Labour & Subcontractor tab
+    if (!inclBamaSw && _pdrIsBamaSw(inv.supplier_name)) return false; // intercompany
     if (inv.is_dd) return inclDd;                 // DD only if opted in
     const due = inv.due_date ? String(inv.due_date).slice(0, 10) : null;
     if (!due) return false;                       // no due date → not schedulable
@@ -28507,7 +28513,14 @@ function _pdrData() {
   for (const r of rows) {
     r.invoices.sort((a, b) => String(a.due_date || '9999').localeCompare(String(b.due_date || '9999')));
   }
-  return { rows, total, overdueTotal, count: open.length, byDate, overdue, inclDd };
+  return { rows, total, overdueTotal, count: open.length, byDate, overdue, inclDd, inclLabour, inclBamaSw };
+}
+
+// Bama South West (intercompany) — matched on normalised supplier name so
+// "Bama South West Ltd", "BAMA Southwest" and "Bama SW" all count.
+function _pdrIsBamaSw(name) {
+  const n = String(name || '').toLowerCase().replace(/[^a-z]/g, '');
+  return n.includes('bamasouthwest') || n.includes('bamasw');
 }
 
 async function renderPaymentsDueReport(run) {
@@ -28527,8 +28540,8 @@ async function renderPaymentsDueReport(run) {
     }
   }
 
-  const { rows, total, overdueTotal, count, byDate, inclDd } = _pdrData();
-  _pdrMeta = { byDate, overdue: !!document.getElementById('pdrOverdue')?.checked, dd: inclDd };
+  const { rows, total, overdueTotal, count, byDate, inclDd, inclLabour, inclBamaSw } = _pdrData();
+  _pdrMeta = { byDate, overdue: !!document.getElementById('pdrOverdue')?.checked, dd: inclDd, labour: inclLabour, bamaSw: inclBamaSw };
 
   const pdfBtn = document.getElementById('pdrPdfBtn'), csvBtn = document.getElementById('pdrCsvBtn');
 
@@ -28606,7 +28619,7 @@ async function renderPaymentsDueReport(run) {
       <td style="${td};border-top:2px solid var(--border);border-bottom:none;font-weight:700;color:var(--accent)">${gbp2(total)}</td>
     </tr></tfoot>
     </table></div>
-    <div style="font-size:10.5px;color:var(--subtle);margin-top:8px">Gross (VAT-inclusive) unpaid supplier invoices due on or before the selected date. Paid invoices excluded. ${inclDd ? 'Direct debits included (flagged DD).' : 'Direct debits excluded.'}</div>`;
+    <div style="font-size:10.5px;color:var(--subtle);margin-top:8px">Gross (VAT-inclusive) unpaid supplier invoices due on or before the selected date. Paid invoices excluded. ${inclDd ? 'Direct debits included (flagged DD).' : 'Direct debits excluded.'} ${inclLabour ? 'Labour & subcontractor invoices included (flagged CIS).' : 'Labour & subcontractor invoices excluded — see the Labour & Subcontractor Payments tab.'} ${inclBamaSw ? 'Bama South West included.' : 'Bama South West excluded.'}</div>`;
   tbl.innerHTML = html;
 }
 
@@ -28640,7 +28653,7 @@ function exportPaymentsDueCsv() {
 // Native jsPDF Payments Due schedule — portrait A4, BAMA house style.
 async function exportPaymentsDuePDF() {
   if (!_pdrRows) { toast('Refresh first', 'error'); return; }
-  const { rows, total, overdueTotal, count, byDate, inclDd } = _pdrData();
+  const { rows, total, overdueTotal, count, byDate, inclDd, inclLabour, inclBamaSw } = _pdrData();
   if (!rows.length) { toast('Nothing to export', 'error'); return; }
   const JsPDFCtor = await resolveJsPDFCtor();
   await (typeof loadLogoDataUri === 'function' ? loadLogoDataUri() : Promise.resolve());
@@ -28742,7 +28755,7 @@ async function exportPaymentsDuePDF() {
   y += 13;
 
   sT(MUTED); doc.setFont('helvetica','normal'); doc.setFontSize(7);
-  doc.splitTextToSize('Gross (VAT-inclusive) unpaid supplier invoices due on or before the selected date, grouped by supplier. Invoices already marked paid (Pay & Remit / BACS run) are excluded. ' + (inclDd ? 'Direct debits are included and flagged DD.' : 'Direct debits are excluded.') + ' Due dates derive from each supplier\u2019s payment terms. Figures are live from the ERP at time of printing.', W).forEach(l => { if (y > pageH - 18) { doc.addPage(); y = mL + 4; } doc.text(l, mL, y); y += 3.4; });
+  doc.splitTextToSize('Gross (VAT-inclusive) unpaid supplier invoices due on or before the selected date, grouped by supplier. Invoices already marked paid (Pay & Remit / BACS run) are excluded. ' + (inclDd ? 'Direct debits are included and flagged DD.' : 'Direct debits are excluded.') + (inclLabour ? ' Labour & subcontractor invoices are included and flagged CIS.' : ' Labour & subcontractor invoices are excluded (reported separately).') + (inclBamaSw ? ' Bama South West is included.' : ' Bama South West is excluded.') + ' Due dates derive from each supplier\u2019s payment terms. Figures are live from the ERP at time of printing.', W).forEach(l => { if (y > pageH - 18) { doc.addPage(); y = mL + 4; } doc.text(l, mL, y); y += 3.4; });
 
   bamaDocFooter(doc, { marginL: mL, marginR: mR, caption: 'Payments Due  \u00b7  BAMA Fabrication Ltd' });
   const blob = doc.output('blob');

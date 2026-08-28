@@ -309,6 +309,8 @@
         </div>
         <label style="font-size:11.5px;color:var(--muted);display:flex;align-items:center;gap:5px"><input type="checkbox" id="pdrOverdue" onchange="renderPaymentsDueReport(true)"> include overdue</label>
         <label style="font-size:11.5px;color:var(--muted);display:flex;align-items:center;gap:5px"><input type="checkbox" id="pdrDd" onchange="renderPaymentsDueReport(true)"> include direct debits</label>
+        <label style="font-size:11.5px;color:var(--muted);display:flex;align-items:center;gap:5px"><input type="checkbox" id="pdrLabour" onchange="renderPaymentsDueReport(true)"> include labour &amp; subcontractors</label>
+        <label style="font-size:11.5px;color:var(--muted);display:flex;align-items:center;gap:5px"><input type="checkbox" id="pdrBamaSw" onchange="renderPaymentsDueReport(true)"> include Bama South West</label>
         <div style="margin-left:auto;display:flex;gap:6px">
           <button class="btn btn-primary btn-sm" onclick="renderPaymentsDueReport(true)">↻ Refresh</button>
           <button class="btn btn-ghost btn-sm" id="pdrPdfBtn" onclick="exportPaymentsDuePDF()" style="display:none">⬇ PDF</button>
@@ -320,6 +322,8 @@
         Every unpaid supplier invoice with a due date on or before the chosen date, grouped by supplier. Due dates come from each supplier's payment terms.
         <strong>Include overdue</strong> (off by default) adds anything already past its due date — turn it on for a true "what do I owe right now" list.
         <strong>Include direct debits</strong> (off by default) adds DD invoices, which the supplier collects automatically — flagged <em>DD</em> so you don't double-pay.
+        <strong>Include labour &amp; subcontractors</strong> (off by default) adds CIS subcontractor invoices and labour-agency invoices — these are reported in the <em>Labour &amp; Subcontractor Payments</em> tab, so they're kept out of this list to stop them muddying the material/supplier payment run.
+        <strong>Include Bama South West</strong> (off by default) adds intercompany invoices from Bama SW.
         Invoices already marked paid (Pay &amp; Remit / BACS run) are excluded. Figures are gross (VAT-inclusive) and live at time of printing.
         Change a wrong due date by fixing the supplier's payment terms in Office → Suppliers.
       </div>
@@ -487,6 +491,6 @@
   </div>
 </div>
 
-<script src="shared.js?v=20260827a"></script>
+<script src="shared.js?v=20260828a"></script>
 </body>
 </html>
