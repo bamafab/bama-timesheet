@@ -11,7 +11,7 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.8.0/mammoth.browser.min.js"></script>
-<script src="ifc-takeoff.js?v=20260806a"></script>
+<script src="ifc-takeoff.js?v=20260828a"></script>
 <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Sans:wght@300;400;500;600;700&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
 @keyframes spin { to { transform: rotate(360deg); } }
@@ -616,7 +616,7 @@ tr.drag-dragging { opacity:0.35; }
           <div class="section-header">
             <div class="section-title">Steel Takeoff</div>
             <div class="flex gap-8">
-              <button class="btn btn-ghost btn-sm" onclick="openIfcImport()" title="Read a full steel takeoff straight out of an IFC model — no Tekla needed">⧉ IFC Import</button>
+              <button class="btn btn-ghost btn-sm" onclick="openIfcImport()" title="Read a full steel takeoff straight out of an IFC or STEP model — no Tekla needed">⧉ IFC/STEP Takeoff</button>
               <button class="btn btn-ghost btn-sm" onclick="openPlanswiftImport()">↑ PlanSwift Import</button>
               <button class="btn btn-ghost btn-sm" onclick="openStaircaseWizard()" title="Generate staircase steel and inject into takeoff">🪜 Staircase</button>
               <button class="btn btn-ghost btn-sm" onclick="openSpiralWizard()" title="Generate spiral/helical staircase steel and inject into takeoff">🌀 Spiral</button>
@@ -1850,9 +1850,9 @@ tr.drag-dragging { opacity:0.35; }
 <!-- IFC IMPORT MODAL — reads a full steel takeoff from an IFC model -->
 <div class="modal-overlay" id="ifcModal">
   <div class="modal" style="max-width:720px">
-    <div class="modal-title">⧉ IFC Import <span style="font-size:11px;color:var(--muted);font-weight:400">— steel takeoff from a model</span></div>
+    <div class="modal-title">⧉ IFC/STEP Takeoff <span style="font-size:11px;color:var(--muted);font-weight:400">— steel takeoff from a model</span></div>
     <p style="font-size:13px;color:var(--muted);margin-bottom:16px">
-      Drop an <strong>.ifc</strong> model here and every beam, column and member is read out of it —
+      Drop an <strong>.ifc</strong> or <strong>.step</strong> model here and every beam, column, member or solid part is read out of it —
       section, length and quantity — grouped by floor level. No Tekla needed, and nothing is estimated:
       sizes come straight from the model, weights and rates from your steel database.
     </p>
@@ -1864,10 +1864,10 @@ tr.drag-dragging { opacity:0.35; }
       ondragleave="this.classList.remove('dragover')"
       ondrop="event.preventDefault();this.classList.remove('dragover');handleIfcDrop(event)">
       <div class="icon">🏗️</div>
-      <div id="ifcDropzoneText"><strong>Click to browse</strong> or drag &amp; drop your IFC model here</div>
-      <div style="font-size:11px;color:var(--muted);margin-top:4px">.ifc accepted · IFC2X3 / IFC4 · large files may take a few seconds</div>
+      <div id="ifcDropzoneText"><strong>Click to browse</strong> or drag &amp; drop your IFC / STEP model here</div>
+      <div style="font-size:11px;color:var(--muted);margin-top:4px">*.ifc · *.step · *.stp accepted · IFC2X3 / IFC4 / AP203 / AP214 / AP242 · large files may take a few seconds</div>
     </div>
-    <input type="file" id="ifcFile" style="display:none" accept=".ifc" onchange="handleIfcFile(this)">
+    <input type="file" id="ifcFile" style="display:none" accept=".ifc,.step,.stp" onchange="handleIfcFile(this)">
 
     <!-- BUSY -->
     <div id="ifcBusy" style="display:none;margin-top:14px;font-size:12px;color:var(--accent2)">
@@ -15491,7 +15491,7 @@ function openIfcImport() {
   if (!q) { toast('Open or create a quote first', 'error'); return; }
   _ifcRows = [];
   document.getElementById('ifcModal').classList.add('active');
-  document.getElementById('ifcDropzoneText').innerHTML = '<strong>Click to browse</strong> or drag &amp; drop your IFC model here';
+  document.getElementById('ifcDropzoneText').innerHTML = '<strong>Click to browse</strong> or drag &amp; drop your IFC / STEP model here';
   document.getElementById('ifcBusy').style.display = 'none';
   document.getElementById('ifcSummary').style.display = 'none';
   document.getElementById('ifcPreview').style.display = 'none';
@@ -15520,7 +15520,8 @@ function handleIfcFile(input) {
 
 async function readIfcFile(file) {
   if (!file) return;
-  if (!/\.ifc$/i.test(file.name)) { toast('That is not an .ifc file', 'error'); return; }
+  const isStep = /\.(step|stp)$/i.test(file.name);   // routing by extension
+  if (!isStep && !/\.ifc$/i.test(file.name)) { toast('That is not an .ifc / .step / .stp file', 'error'); return; }
   const busy = document.getElementById('ifcBusy');
   const busyText = document.getElementById('ifcBusyText');
   busy.style.display = 'block';
@@ -15532,17 +15533,25 @@ async function readIfcFile(file) {
   btn.disabled = true; btn.style.opacity = '0.4';
 
   try {
-    if (!window.IFCTakeoff) throw new Error('IFC reader module not loaded — try a hard refresh (Ctrl+Shift+R).');
-    busyText.textContent = 'Reading model — this can take a few seconds for a big file…';
-    const buf = await file.arrayBuffer();
-
-    const matchFn = (typeof findSteelProfile === 'function') ? findSteelProfile : null;
-    const rateFn  = (typeof sectionMaterialRate === 'function') ? sectionMaterialRate : null;
-
-    const { rows, summary } = await window.IFCTakeoff.parseIFC(buf, {
-      matchFn: matchFn ? (s => matchFn(s)) : undefined,
-      rateFn:  rateFn  ? (s => rateFn(s))  : undefined
-    });
+    const rateFn = (typeof sectionMaterialRate === 'function') ? sectionMaterialRate : null;
+    let rows, summary;
+    if (isStep) {
+      // STEP goes to the Python/OpenCascade backend (takeoff/step_takeoff.py)
+      // — exact BRep volumes, same {rows, summary} shape as the IFC engine.
+      busyText.textContent = 'Sending the STEP file to the takeoff engine…';
+      ({ rows, summary } = await parseStepViaBackend(file));
+      // The backend has no steel DB — plate/bar material rate is set here.
+      if (rateFn) rows.forEach(r => { if (r.rate == null) r.rate = rateFn('PLT'); });
+    } else {
+      if (!window.IFCTakeoff) throw new Error('IFC reader module not loaded — try a hard refresh (Ctrl+Shift+R).');
+      busyText.textContent = 'Reading model — this can take a few seconds for a big file…';
+      const buf = await file.arrayBuffer();
+      const matchFn = (typeof findSteelProfile === 'function') ? findSteelProfile : null;
+      ({ rows, summary } = await window.IFCTakeoff.parseIFC(buf, {
+        matchFn: matchFn ? (s => matchFn(s)) : undefined,
+        rateFn:  rateFn  ? (s => rateFn(s))  : undefined
+      }));
+    }
 
     if (!rows.length) {
       busy.style.display = 'none';
@@ -15550,6 +15559,7 @@ async function readIfcFile(file) {
       document.getElementById('ifcDropzoneText').innerHTML = '⚠ No steel members or solid parts found — is this a structural/fabrication model?';
       return;
     }
+    window._takeoffLowConfidence = !!(summary.geometryQuality && summary.geometryQuality.lowConfidence);
 
     // Group identical section+length pieces (within 1mm) into qty rows, per level,
     // reusing the same grouper PlanSwift uses.
@@ -15561,14 +15571,45 @@ async function readIfcFile(file) {
     document.getElementById('ifcAreaWrap').style.display = 'block';
     btn.disabled = false; btn.style.opacity = '1';
     document.getElementById('ifcDropzoneText').innerHTML = summary.mode === 'parts'
-      ? `✅ <strong>${file.name}</strong> — ${summary.parts} solid parts measured (${summary.totalKg} kg)`
+      ? `✅ <strong>${file.name}</strong> — ${summary.parts} solid parts measured (${summary.totalKg} kg)${window._takeoffLowConfidence ? ' · <span style="color:var(--amber)">LOW CONFIDENCE</span>' : ''}`
       : `✅ <strong>${file.name}</strong> — ${summary.total} members read`;
   } catch (err) {
     busy.style.display = 'none';
-    console.error('IFC parse failed:', err);
-    toast('Could not read that IFC: ' + (err.message || err), 'error');
+    console.error('IFC/STEP parse failed:', err);
+    toast('Could not read that model: ' + (err.message || err), 'error');
     document.getElementById('ifcDropzoneText').innerHTML = '⚠ Could not read that model — see the message, or try another export';
   }
+}
+
+// Where takeoff/server.py (Python + OpenCascade — cannot live inside the Node
+// Function App) is deployed. Same-origin path by default so an SWA proxy /
+// container route can pick it up; repoint when the backend gets its home.
+const STEP_TAKEOFF_ENDPOINT = '/api/step-takeoff';
+
+async function parseStepViaBackend(file) {
+  const data_b64 = await new Promise((res, rej) => {
+    const r = new FileReader();
+    r.onload = () => res(String(r.result).split(',')[1] || '');
+    r.onerror = () => rej(new Error('Could not read the file'));
+    r.readAsDataURL(file);
+  });
+  let res;
+  try {
+    res = await fetch(STEP_TAKEOFF_ENDPOINT, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ filename: file.name, data_b64 })
+    });
+  } catch (e) {
+    throw new Error('STEP takeoff backend unreachable — .ifc import still works client-side');
+  }
+  if (res.status === 404) throw new Error('STEP takeoff backend is not deployed yet — export the model as .ifc for now');
+  if (!res.ok) {
+    let msg = '';
+    try { msg = (await res.json()).error || ''; } catch (e) { /* body not JSON */ }
+    throw new Error('STEP engine error: ' + (msg || ('HTTP ' + res.status)));
+  }
+  return res.json();
 }
 
 // Group per (level + section + length≈), preserving the level in _notes.
@@ -15592,11 +15633,16 @@ function renderIfcSummary(s, filename) {
        <span style="width:8px;height:8px;border-radius:50%;background:${col}"></span>${label}<strong style="color:${col}">${val}</strong></span>`;
   const el = document.getElementById('ifcSummary');
   el.style.display = 'flex';
+  const gq = s.geometryQuality;
   el.innerHTML = s.mode === 'parts'
     ? chip('Solid parts', s.parts, 'var(--accent)') +
       chip('Unique rows', s.uniqueParts, '#6366f1') +
       chip('Total kg', s.totalKg, '#3ecf8e') +
-      chip('Assemblies', s.levels.length, 'var(--accent2)')
+      chip('Assemblies', s.levels.length, 'var(--accent2)') +
+      (gq ? chip('Closed shells', gq.shellsClosed, '#3ecf8e') +
+            (gq.shellsOpen ? chip('Open shells', gq.shellsOpen, 'var(--amber)') : '') +
+            (gq.lowConfidence ? chip('LOW CONFIDENCE', gq.openVolumePct + '% open vol', '#ef4444') : '')
+          : '')
     : chip('Beams', s.beams, 'var(--accent)') +
       chip('Columns', s.columns, '#6366f1') +
       chip('Members', s.members, '#3ecf8e') +
@@ -15633,7 +15679,11 @@ function renderIfcPreview(rows, summary) {
   const note = document.getElementById('ifcUnmatchedNote');
   if (summary.mode === 'parts') {
     note.style.display = 'block';
-    note.innerHTML = `ℹ This model has no linear steel members — it is a solids/plate assembly (CATIA-style export). Each row's kg is the exact mesh volume × 7850 kg/m³, imported as EA pieces. Rename rows and set material rates after import as needed.`;
+    const gq = summary.geometryQuality;
+    const lowConf = gq && gq.lowConfidence
+      ? `<br>⚠ <strong style="color:var(--amber)">LOW CONFIDENCE:</strong> ${gq.openVolumePct}% of the total volume comes from OPEN shells (${gq.shellsOpen} of ${gq.shellsOpen + gq.shellsClosed}) — the export isn't watertight, so those weights are a best effort. Get a solids export (or the .step) if the tonnage matters.`
+      : '';
+    note.innerHTML = `ℹ This model has no linear steel members — it is a solids/plate assembly (CATIA-style export). Each row's kg is the exact measured volume × 7850 kg/m³, imported as EA pieces. Rename rows and set material rates after import as needed.${lowConf}`;
   } else if (summary.unmatchedSection > 0) {
     note.style.display = 'block';
     note.innerHTML = `⚠ ${summary.unmatchedSection} member${summary.unmatchedSection===1?'':'s'} could not be matched to a steel section in the database — they will import with the name shown, but their kg/m and price won't be set until you correct the section. ${summary.missingLength ? `Also ${summary.missingLength} member${summary.missingLength===1?'':'s'} had no readable length.` : ''}`;
@@ -22591,10 +22641,10 @@ const HELP_CONTENT = {
           <li><span class="h-step-num">5</span><div>Use <strong>Areas</strong> to group members by location (Ground Floor, Mezzanine, Roof).</div></li>
           <li><span class="h-step-num">5b</span><div><strong>Selecting rows:</strong> tick individual row checkboxes, use the checkbox on any <strong>area or sub-area header</strong> (including Unspecified) to select that whole group in one click, or the master checkbox in the table header to select everything. Selecting a collapsed area expands it first so nothing escapes the selection — then use the bulk bar to move, delete, or select same-type.</div></li>
           <li><span class="h-step-num">6</span><div><strong>PlanSwift Import is always additive</strong> — it only ever adds rows; your existing takeoff is never overwritten or merged. Pick an existing area, type a new area name, or leave it on "Use areas from file". If a second import would put identical members (same section + length) into an area that already has them, or the file's area names match existing areas, you get a warning first — so two separate takeoffs never get silently compiled into one.</div></li>
-          <li><span class="h-step-num">7</span><div><strong>IFC Import (⧉) reads the whole takeoff from a model.</strong> When the job comes with an <span class="h-kbd">.ifc</span> file, drop it in and every beam, column and member is read out — section, length and quantity — grouped by floor level, in seconds. No Tekla needed. Sizes come straight from the model; weights and rates from your steel database. Review the preview, then import (additive, same as PlanSwift). Anything the database doesn't recognise is flagged ⚠ so you can fix the section after import.</div></li>
+          <li><span class="h-step-num">7</span><div><strong>IFC/STEP Takeoff (⧉) reads the whole takeoff from a model.</strong> When the job comes with an <span class="h-kbd">.ifc</span>, <span class="h-kbd">.step</span> or <span class="h-kbd">.stp</span> file, drop it in and every beam, column, member or solid part is read out — grouped by floor level (IFC) or as measured EA pieces (STEP / CAD solids). No Tekla needed. Sizes and volumes come straight from the model; weights and rates from your steel database. Watch the shell chips on solids exports: <strong>LOW CONFIDENCE</strong> means more than 20% of the volume came from open (non-watertight) shells, so ask for a solids export if the tonnage matters. Review the preview, then import (additive, same as PlanSwift). Anything the database doesn't recognise is flagged ⚠ so you can fix the section after import.</div></li>
           <li><span class="h-step-num">7b</span><div><strong>Plate & bracket models work too (CATIA / SolidWorks exports).</strong> If the IFC has no beams or columns — just solid parts, like a machined bracket or plate assembly — QB switches to <em>parts mode</em>: every solid's weight is measured exactly from its own geometry (mesh volume × 7850 kg/m³) and imported as EA pieces with kg-each. Identical parts group into a quantity, plates are recognised and named PLT t × w × l, and the assembly name becomes the area. No redrawing needed — the model is the takeoff.</div></li>
         </ul>
-        <div class="h-tip">Got an IFC? Use ⧉ IFC Import — it's the fastest route and you don't need anyone with Tekla. Otherwise import from PlanSwift with the ↑ PlanSwift button. For stairs, spiral stairs or balustrades, use the 🪜 / 🌀 / 🛡 wizards in the Takeoff bar (see the <strong>Wizards</strong> help tab) to build and price them automatically.</div>
+        <div class="h-tip">Got an IFC or a STEP? Use ⧉ IFC/STEP Takeoff — it's the fastest route and you don't need anyone with Tekla. Otherwise import from PlanSwift with the ↑ PlanSwift button. For stairs, spiral stairs or balustrades, use the 🪜 / 🌀 / 🛡 wizards in the Takeoff bar (see the <strong>Wizards</strong> help tab) to build and price them automatically.</div>
       </div>
       <div class="h-section">
         <div class="h-heading"><span class="h-icon">❓</span> FAQ</div>
@@ -22606,6 +22656,8 @@ const HELP_CONTENT = {
         <div class="h-a">Each row going for galvanising must have Finish set to "Galvanised". Untagged rows are excluded from the total.</div></div>
         <div class="h-faq"><div class="h-q">Do I include bolts and cleats?</div>
         <div class="h-a">No — the Fittings % in Calcs (default 10%) covers that. List main structural members only.</div></div>
+        <div class="h-faq"><div class="h-q">IFC/STEP import: the result says LOW CONFIDENCE</div><div class="h-a">More than 20% of the model's volume came from open (non-watertight) shells — common with surface-style exports from CATIA/SolidWorks. The kg shown is a best effort. Ask the sender for a solids export, or the native .step, and re-import.</div></div>
+        <div class="h-faq"><div class="h-q">STEP import: "backend is not deployed yet"</div><div class="h-a">.step/.stp files are measured server-side by the OpenCascade takeoff engine (takeoff/server.py). If it isn't running, export the model as .ifc instead — that path works entirely in the browser.</div></div>
         <div class="h-faq"><div class="h-q">IFC import: some rows show a ⚠ next to the section</div>
         <div class="h-a">That member's section text from the model didn't match anything in the steel database, so its kg/m isn't set. The member still imports with the name shown — just correct the section (or type kg/m in) after import and the weight resolves.</div></div>
         <div class="h-faq"><div class="h-q">IFC import: a row shows 0mm length</div>
