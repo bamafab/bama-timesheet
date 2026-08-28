@@ -820,6 +820,19 @@ tr.drag-dragging { opacity:0.35; }
                     <button class="btn btn-ghost btn-sm" onclick="addPlantFromSearch()">+ Add</button>
                   </div>
                 </div>
+                <hr class="divider">
+                <div style="font-size:11px;color:var(--muted);margin-bottom:6px;font-weight:600">LODGING</div>
+                <div class="cost-row cost-row-4">
+                  <span class="cost-label">Lodging <span style="font-size:10px;color:var(--subtle)">(persons &times; nights)</span></span>
+                  <div style="display:flex;gap:4px;align-items:center">
+                    <input type="number" step="any" min="0" class="cost-input" id="lodging-persons" value="0" placeholder="ppl" title="People staying away overnight" oninput="recalcAll()" style="flex:1;min-width:0">
+                    <span style="color:var(--subtle);font-size:11px;flex-shrink:0">&times;</span>
+                    <input type="number" step="any" min="0" class="cost-input" id="lodging-nights" value="" placeholder="auto" title="Nights — leave blank to follow Days on site" oninput="recalcAll()" style="flex:1;min-width:0">
+                  </div>
+                  <input type="number" step="any" min="0" class="cost-input" id="lodging-rate" value="75" title="&pound; per person per night — default from Global Rates &rarr; Plant &amp; Equipment" oninput="recalcAll()">
+                  <div class="cost-result" id="lodging-result">£0.00</div>
+                </div>
+                <div style="font-size:10px;color:var(--muted);margin:-4px 0 6px;padding-left:2px" id="lodging-hint"></div>
               </div>
             </div>
 
@@ -7157,7 +7170,15 @@ function computeQuoteTotals(quote, ratesObj) {
   (quote.plantRows || []).forEach(r => {
     plantCost += (parseFloat(r.qty) || 1) * (parseFloat(r.rate) || 0);
   });
-  const installation = Math.round((labourCost + plantCost) * 100) / 100;
+  // Lodging: persons × nights × per-person/night rate (Global Rates →
+  // Plant & Equipment → Lodging, default £75). Nights left blank/0 follows
+  // days-on-site so the line tracks programme changes automatically; an
+  // explicit nights figure decouples it (e.g. crew travels home weekends).
+  const lodgingPersons = parseFloat(quote.lodgingPersons) || 0;
+  const _lnRaw = parseFloat(quote.lodgingNights);
+  const lodgingNightsEff = (isFinite(_lnRaw) && _lnRaw > 0) ? _lnRaw : days;
+  const lodgingCost = Math.round(lodgingPersons * lodgingNightsEff * (parseFloat(quote.lodgingRate) || 0) * 100) / 100;
+  const installation = Math.round((labourCost + plantCost + lodgingCost) * 100) / 100;
 
   // ── Fabrication ──────────────────────────────────────────
   const fabWorkshop  = (parseFloat(quote.fabHours)     || 0) * (parseFloat(quote.fabRate)     || 45);
@@ -7294,6 +7315,7 @@ function computeQuoteTotals(quote, ratesObj) {
     stairFab, stairDesign, stairInstall, stairLabourTotal,
     fittingsCostVal: Math.round(fittingsCostVal * 100) / 100,
     fixingsCost: Math.round(fixingsCost * 100) / 100,
+    lodgingCost, lodgingNightsEff,
     consumablesCost: Math.round(consumablesCost * 100) / 100,
     subtotal, marginAmt, total, totalExact,
     // Weight
@@ -7379,7 +7401,7 @@ const DEFAULT_RATES = {
     'van':               { label: 'Van',                                                       rate: 25    },
     'fuel':         { label: 'Fuel',                 rate: 25 },
     'tools':        { label: 'Tools',                rate: 25 },
-    'lodging':      { label: 'Lodging (per person/night)', rate: 80 },
+    'lodging':      { label: 'Lodging (per person/night)', rate: 75 },
     'other_plant':  { label: 'Other',                rate: 0 }
   },
   fab: {
@@ -7540,6 +7562,11 @@ let rates = JSON.parse(localStorage.getItem('bama_rates') || 'null') || JSON.par
       if (rates[cat][key] == null) rates[cat][key] = JSON.parse(JSON.stringify(DEFAULT_RATES[cat][key]));
     });
   });
+  // 2026-08-28 one-off: lodging default dropped £80 → £75/person/night.
+  // £80 was only ever the shipped default (localStorage snapshots keep it
+  // forever otherwise) — anyone still sitting on it inherits the new figure.
+  // A deliberately customised value (anything ≠ 80) is left alone.
+  if (rates.plant?.lodging?.rate === 80) rates.plant.lodging.rate = 75;
 })();
 
 function defaultRate(category, key) {
@@ -7860,6 +7887,7 @@ async function newQuote() {
     fittingsPct: 10, fittingsRate: 1.30, miscMaterial: 0, miscMaterialNote: '',
     materialLinks: [],
     instDays: 0, instOperatives: 2, globalDays: true,
+    lodgingPersons: 0, lodgingNights: 0,
     labourRows: [], plantRows: [], paintRows: [], deliveryRows: [], prelimRows: [], consumableRows: [], surveyVisitRows: [],
     fabHours: 0, fabRate: 45, fabpackHours: 0, fabpackRate: 50,
     structEngHours: 0, structEngRate: 90, architectHours: 0, architectRate: 90, designHours: 0, designRate: 50,
@@ -8900,6 +8928,9 @@ function loadQuoteEditor() {
   // calcs
   document.getElementById('inst-days').value       = q.instDays || 0;
   document.getElementById('inst-operatives').value  = q.instOperatives || 2;
+  const _lpEl = document.getElementById('lodging-persons'); if (_lpEl) _lpEl.value = q.lodgingPersons || 0;
+  const _lnEl = document.getElementById('lodging-nights');  if (_lnEl) _lnEl.value = (parseFloat(q.lodgingNights) > 0) ? q.lodgingNights : '';
+  const _lrEl = document.getElementById('lodging-rate');    if (_lrEl) _lrEl.value = (q.lodgingRate != null && isFinite(q.lodgingRate)) ? q.lodgingRate : (defaultRate('plant','lodging') || 75);
   const gtEl = document.getElementById('globalDaysToggle'); if(gtEl) gtEl.checked = q.globalDays !== false;
   document.getElementById('fab-hours').value          = q.fabHours || 0;
   document.getElementById('fab-rate').value           = q.fabRate || 45;
@@ -14815,6 +14846,9 @@ function recalcAll() {
   q.globalDays    = document.getElementById('globalDaysToggle')?.checked !== false;
   q.instDays      = parseFloat(document.getElementById('inst-days')?.value)       || 0;
   q.instOperatives= parseFloat(document.getElementById('inst-operatives')?.value) || 2;
+  q.lodgingPersons= parseFloat(document.getElementById('lodging-persons')?.value) || 0;
+  q.lodgingNights = (v => isFinite(v) && v > 0 ? v : 0)(parseFloat(document.getElementById('lodging-nights')?.value));
+  q.lodgingRate   = (v => isFinite(v) ? v : (defaultRate('plant','lodging') || 75))(parseFloat(document.getElementById('lodging-rate')?.value));
 
   // Snapshot dynamic rows from DOM into quote
   (q.labourRows||[]).forEach(r => {
@@ -14876,6 +14910,13 @@ function recalcAll() {
 
   // Update per-row results for dynamic rows
   sumLabour(); sumPlant(); sumPaint(); sumConsumables(); sumSurveyVisits(); sumDelivery(); sumPrelims();
+
+  // Lodging line (persons × nights × rate — engine figure, incl. auto-nights)
+  const _lodEl = document.getElementById('lodging-result');
+  if (_lodEl) _lodEl.textContent = fmt(C.lodgingCost || 0);
+  const _lodHint = document.getElementById('lodging-hint');
+  if (_lodHint) _lodHint.textContent = (q.lodgingPersons > 0 && !(q.lodgingNights > 0))
+    ? `nights auto = days on site (${C.lodgingNightsEff || 0})` : '';
 
   // ── Missing kgm warning ───────────────────────────────────
   const warn = document.getElementById('weightWarning');
@@ -17587,6 +17628,7 @@ async function saveCalcsTemplate() {
   const templates = JSON.parse(localStorage.getItem('bama_calcs_templates')||'{}');
   templates[name.trim()] = {
     instDays: q.instDays, instOperatives: q.instOperatives,
+    lodgingPersons: q.lodgingPersons, lodgingNights: q.lodgingNights, lodgingRate: q.lodgingRate,
     labourRows: q.labourRows, plantRows: q.plantRows,
     fabHours: q.fabHours, fabRate: q.fabRate,
     fabpackHours: q.fabpackHours, fabpackRate: q.fabpackRate,
@@ -21829,6 +21871,16 @@ function buildHandoverPackHtml(q) {
         </tr>`;
       }).join('')
     : '<tr><td colspan="5" class="hp-empty">No plant/equipment</td></tr>';
+  // Lodging (persons × nights × rate) — engine-effective nights (auto = days
+  // on site), read from the same computeQuoteTotals result as everything else
+  // so the pack can never disagree with the Calcs tab.
+  const _lodC = computed.lodgingCost || 0;
+  const lodgingHTML = _lodC > 0
+    ? `<tr>
+        <td>Lodging</td>
+        <td colspan="3" style="color:#666">${q.lodgingPersons || 0} person${(q.lodgingPersons||0) !== 1 ? 's' : ''} × ${computed.lodgingNightsEff || 0} night${(computed.lodgingNightsEff||0) !== 1 ? 's' : ''} @ £${Number(q.lodgingRate||0).toLocaleString('en-GB',{minimumFractionDigits:2,maximumFractionDigits:2})}/night</td>
+        <td class="r mono">${fmt(_lodC)}</td>
+      </tr>` : '';
 
   // ── Finishing — ENGINE-EFFECTIVE quantities (mirrors computeQuoteTotals
   //    auto-fill: blank qty on tonnes-unit rows falls back to finish tags,
@@ -22120,7 +22172,7 @@ function buildHandoverPackHtml(q) {
     <div class="hp-sec-head navy">🏗 Plant &amp; Equipment</div>
     <table>
       <thead><tr><th>Equipment / Item</th><th class="r" colspan="3">Detail</th><th class="r">Cost</th></tr></thead>
-      <tbody>${plantHTML}</tbody>
+      <tbody>${plantHTML}${lodgingHTML}</tbody>
     </table>
   </div>
 
@@ -22363,6 +22415,7 @@ async function createImportedQuote() {
     fittingsPct: 10, fittingsRate: 1.30, miscMaterial: 0, miscMaterialNote: '',
     materialLinks: [],
     instDays: 0, instOperatives: 2, globalDays: true,
+    lodgingPersons: 0, lodgingNights: 0,
     labourRows: [], plantRows: [], paintRows: [], deliveryRows: [], prelimRows: [], consumableRows: [], surveyVisitRows: [],
     fabHours: 0, fabRate: 45, fabpackHours: 0, fabpackRate: 50,
     structEngHours: 0, structEngRate: 90, architectHours: 0, architectRate: 90, designHours: 0, designRate: 50,
@@ -22641,7 +22694,7 @@ const HELP_CONTENT = {
       <div class="h-section">
         <div class="h-heading"><span class="h-icon">🧮</span> Key cost blocks</div>
         <ul class="h-steps">
-          <li><span class="h-step-num">1</span><div><strong>Installation</strong> — erector days × rate × headcount. Click N/A if supply-only.</div></li>
+          <li><span class="h-step-num">1</span><div><strong>Installation</strong> — erector days × rate × headcount, plus Plant &amp; Equipment and <strong>Lodging</strong> (persons × nights × £/person/night, default £75 from Global Rates → Plant &amp; Equipment). Leave nights blank and it follows Days on site automatically; type a figure to decouple (e.g. crew home at weekends). Click N/A if supply-only.</div></li>
           <li><span class="h-step-num">2</span><div><strong>Fabrication</strong> — workshop hours × £/hr. Click ⚡ From takeoff to auto-suggest based on tonnage and profile complexity.</div></li>
           <li><span class="h-step-num">3</span><div><strong>Design</strong> — Draughtsman, Struct Eng, Approval & Fab Pack separately. Enter hours and rate per discipline. Note: the ⚡ Wizard fills only Draughtsman (detailing midpoint — this covers producing the approval drawings &amp; fab pack) and Struct Eng; the Approval &amp; Fab Pack bucket stays at 0 unless you set it manually here.</div></li>
           <li><span class="h-step-num">4</span><div><strong>Galvanising</strong> — qty auto-fills from tagged takeoff rows. Check the rate matches your current subcontractor quote.</div></li>
@@ -23235,6 +23288,7 @@ async function qqSaveAsDraft() {
     materialLinks: [],
     instDays: r2.scope === 'supply_install' ? r2.instDays : 0,
     instOperatives: r2.instErectors + r2.instSupervisors, globalDays: true,
+    lodgingPersons: 0, lodgingNights: 0,
     labourRows: r2.scope === 'supply_install' ? [
       { id: Date.now()+'_l1', role: 'Erector',    qty: r2.instErectors,    rate: r2.rates.erectorRate,    days: r2.instDays, locked: false },
       { id: Date.now()+'_l2', role: 'Supervisor',  qty: r2.instSupervisors, rate: r2.rates.supervisorRate, days: r2.instDays, locked: false }
@@ -23391,6 +23445,7 @@ async function qqSaveAsDraft() {
         fittingsPct: 10, fittingsRate: 1.30, miscMaterial: 0, miscMaterialNote: '',
         materialLinks: [],
         instDays: 0, instOperatives: 2, globalDays: true,
+    lodgingPersons: 0, lodgingNights: 0,
         labourRows: [], plantRows: [], paintRows: [], deliveryRows: [], prelimRows: [], consumableRows: [], surveyVisitRows: [],
         fabHours: 0, fabRate: 45, fabpackHours: 0, fabpackRate: 50,
         structEngHours: 0, structEngRate: 90, architectHours: 0, architectRate: 90, designHours: 0, designRate: 50,
