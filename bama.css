@@ -409,7 +409,7 @@
   .mgr-content {
     flex: 1;
     padding: 36px 32px;
-    max-width: 1100px;
+    max-width: none;   /* full window width on all shell pages (was 1100px — office/manager/reports/project-tracker sat at half-screen on wide monitors) */
     min-width: 0;
   }
 
