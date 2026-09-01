@@ -42221,6 +42221,60 @@ function useInvCustomerFreeText() {
   document.getElementById('invNewCustomerDropdown').innerHTML = '';
 }
 
+// ── Double-billing guard ──────────────────────────────────────────────────
+// A project counts as "billed" once any live sales invoice points at it —
+// Draft, Issued and Paid all count (a Draft is still a claim in flight);
+// credit notes and Void/Cancelled invoices don't. Deterministic scan of the
+// loaded invoice list — nothing is inferred beyond project_id equality.
+function _invProjectBilledRef(projectId) {
+  if (!projectId) return null;
+  const editingId = (typeof _invEditing !== 'undefined' && _invEditing) ? _invEditing.id : null;
+  const hit = (_invInvoiceList || []).find(i =>
+    i.project_id === projectId &&
+    i.id !== editingId &&                       // editing an invoice ≠ billed by itself
+    i.kind !== 'credit_note' &&
+    i.status !== 'Void' && i.status !== 'Cancelled');
+  return hit ? (hit.ref || 'an unreferenced invoice') : null;
+}
+
+// A quote counts as billed if its linked project is billed — via project_id
+// when stamped, else the Q↔C numbering convention (quote Q260747 → project
+// C260747, exact match) for older wins where project_id was never written.
+function _invQuoteBilledRef(q) {
+  if (!q) return null;
+  if (q.project_id) {
+    const r = _invProjectBilledRef(q.project_id);
+    if (r) return r;
+  }
+  const ref = String(q.reference || '').trim().toUpperCase();
+  const m = ref.match(/^Q(\d+)/);
+  if (m) {
+    const pn = 'C' + m[1];
+    const p = (_invProjectsCache || []).find(pp =>
+      String(pp.project_number || '').trim().toUpperCase() === pn);
+    if (p) return _invProjectBilledRef(p.id);
+  }
+  return null;
+}
+
+// Dropdown selection guard — warns before re-billing an already-billed
+// project (a second invoice can be legitimate: extras, staged work).
+async function selectInvProjectGuarded(id) {
+  const billedRef = _invProjectBilledRef(id);
+  if (billedRef) {
+    const p = (_invProjectsCache || []).find(x => x.id === id);
+    const ok = await bamaConfirm({
+      title: 'Project already billed',
+      body: `<b>${escapeHtml((p && p.project_number) || 'This project')}</b> already has invoice
+             <b>${escapeHtml(billedRef)}</b> against it. Raising another invoice here may
+             <b>double-bill the customer</b>. Continue anyway?`,
+      confirmText: 'Use project anyway'
+    });
+    if (!ok) return;
+  }
+  selectInvProject(id);
+}
+
 function filterInvProjects(q) {
   const dropdown = document.getElementById('invNewProjectDropdown');
   if (!dropdown) return;
@@ -42232,20 +42286,39 @@ function filterInvProjects(q) {
     ? _invProjectsCache.filter(p => p.client_id === _invSelectedClient.id)
     : _invProjectsCache;
   if (!lower && !_invSelectedClient) { dropdown.innerHTML = ''; return; }
-  const matches = pool
-    .filter(p => !lower || ((p.project_number || '') + ' ' + (p.project_name || '')).toLowerCase().includes(lower))
-    .slice(0, 8);
+  const textMatch = p => !lower || ((p.project_number || '') + ' ' + (p.project_name || '')).toLowerCase().includes(lower);
+  // Billed projects are hidden from browse mode entirely; a typed query still
+  // finds them, shown greyed with a BILLED badge + confirm — so a legitimate
+  // second invoice stays possible but never happens by mis-click.
+  const unbilled = [], billed = [];
+  for (const p of pool) {
+    if (!textMatch(p)) continue;
+    const ref = _invProjectBilledRef(p.id);
+    if (ref) billed.push({ p, ref }); else unbilled.push(p);
+  }
+  const matches = unbilled.slice(0, 8);
+  const billedShown = lower ? billed.slice(0, Math.max(0, 8 - matches.length)) : [];
   dropdown.innerHTML = `<div style="position:absolute;top:0;left:0;right:0;background:var(--surface);
        border:1px solid var(--border);border-radius:6px;max-height:240px;overflow:auto;z-index:30">
     ${matches.map(p => `
       <div style="padding:8px 12px;cursor:pointer;font-size:13px;border-bottom:1px solid var(--border)"
-           onmousedown="selectInvProject(${p.id})"
+           onmousedown="selectInvProjectGuarded(${p.id})"
            onmouseover="this.style.background='var(--surface2)'"
            onmouseout="this.style.background=''">
         <span style="font-family:var(--font-mono);font-weight:600">${escapeHtml(p.project_number || '')}</span>
         — ${escapeHtml(p.project_name || '')}
       </div>`).join('')}
-    ${matches.length === 0 ? `<div style="padding:8px 12px;color:var(--subtle);font-size:12px">${_invSelectedClient ? 'No matching projects for ' + escapeHtml(_invSelectedClient.company_name || 'this client') : 'No matching projects'}</div>` : ''}
+    ${billedShown.map(({ p, ref }) => `
+      <div style="padding:8px 12px;cursor:pointer;font-size:13px;border-bottom:1px solid var(--border);opacity:.65"
+           onmousedown="selectInvProjectGuarded(${p.id})"
+           onmouseover="this.style.background='var(--surface2)'"
+           onmouseout="this.style.background=''">
+        <span style="font-family:var(--font-mono);font-weight:600">${escapeHtml(p.project_number || '')}</span>
+        — ${escapeHtml(p.project_name || '')}
+        <span style="color:var(--amber,#d97706);font-size:10.5px;font-weight:700;margin-left:6px">BILLED · ${escapeHtml(ref)}</span>
+      </div>`).join('')}
+    ${matches.length === 0 && billedShown.length === 0 ? `<div style="padding:8px 12px;color:var(--subtle);font-size:12px">${_invSelectedClient ? 'No matching projects for ' + escapeHtml(_invSelectedClient.company_name || 'this client') : 'No matching projects'}${!lower && billed.length ? ' — ' + billed.length + ' already-billed hidden (type to find them)' : ''}</div>` : ''}
+    ${!lower && billed.length && (matches.length || billedShown.length) ? `<div style="padding:6px 12px;color:var(--subtle);font-size:11px;border-bottom:1px solid var(--border)">${billed.length} already-billed project${billed.length === 1 ? '' : 's'} hidden — type to find them</div>` : ''}
     <div style="padding:8px 12px;cursor:pointer;font-size:13px;color:var(--muted);font-style:italic"
          onmousedown="clearInvProject()"
          onmouseover="this.style.background='var(--surface2)'"
@@ -42332,15 +42405,18 @@ function filterInvQuotes(q) {
   }).slice(0, 8);
   dropdown.innerHTML = `<div style="position:absolute;top:0;left:0;right:0;background:var(--surface);
        border:1px solid var(--border);border-radius:6px;max-height:240px;overflow:auto;z-index:30">
-    ${matches.map(x => `
-      <div style="padding:8px 12px;cursor:pointer;font-size:13px;border-bottom:1px solid var(--border)"
+    ${matches.map(x => {
+      const _bref = _invQuoteBilledRef(x);
+      return `
+      <div style="padding:8px 12px;cursor:pointer;font-size:13px;border-bottom:1px solid var(--border)${_bref ? ';opacity:.65' : ''}"
            onmousedown="selectInvQuote(${x.id})"
            onmouseover="this.style.background='var(--surface2)'"
            onmouseout="this.style.background=''">
         <span style="font-family:var(--font-mono);font-weight:600">${escapeHtml(x.reference || '')}</span>
         — ${escapeHtml(x.company || '')}
         <span style="color:var(--muted);font-size:11px">· £${Number(x.total_ex_vat || 0).toLocaleString('en-GB', { minimumFractionDigits: 2 })} ex VAT${x.status ? ' · ' + escapeHtml(x.status) : ''}${x.project_name ? ' · ' + escapeHtml(x.project_name) : ''}</span>
-      </div>`).join('')}
+        ${_bref ? `<span style="color:var(--amber,#d97706);font-size:10.5px;font-weight:700;margin-left:6px">BILLED · ${escapeHtml(_bref)}</span>` : ''}
+      </div>`; }).join('')}
     ${matches.length === 0 ? `<div style="padding:8px 12px;color:var(--subtle);font-size:12px">No quotes found${!lower && _invSelectedProject ? ' for ' + escapeHtml(_invSelectedProject.project_number || 'this project') : ''} (${(_invQuotesCache || []).length} loaded) — type a reference or company to search all quotes</div>` : ''}
     <div style="padding:8px 12px;cursor:pointer;font-size:13px;color:var(--muted);font-style:italic"
          onmousedown="clearInvQuote()"
@@ -42355,6 +42431,19 @@ async function selectInvQuote(id) {
   const x = (_invQuotesCache || []).find(q => q.id === id);
   if (!x) return;
   document.getElementById('invNewQuoteDropdown').innerHTML = '';
+
+  // Double-billing guard — the quote's project already has a live invoice
+  const _billedRef = _invQuoteBilledRef(x);
+  if (_billedRef) {
+    const okBilled = await bamaConfirm({
+      title: 'Quote already billed',
+      body: `<b>${escapeHtml(x.reference || 'This quote')}</b>'s project already has invoice
+             <b>${escapeHtml(_billedRef)}</b> against it. Billing it again may
+             <b>double-bill the customer</b>. Continue anyway?`,
+      confirmText: 'Bill anyway'
+    });
+    if (!okBilled) return;
+  }
 
   // One line, one total — never itemise the quote's internal breakdown.
   // Total resolution: total_ex_vat column first; if that's NULL/0 (quote not

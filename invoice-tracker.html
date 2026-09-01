@@ -1754,6 +1754,12 @@ const INV_HELP = {
     search all QB quotes by reference or company. Picking one fills a single line —
     <b>"As per Quotation Q26xxxx…"</b> — with the quote's ex-VAT total. The invoice never itemises prelims /
     design / fabrication: one line, one total, as agreed. The line stays fully editable.</p>
+    <h3>Double-billing guard</h3>
+    <p>Projects that already have a live invoice against them (Draft, Issued or Paid — credit notes and voided
+    invoices don't count) are <b>hidden from the Project dropdown</b> when browsing, with a note saying how many
+    were hidden. Typing still finds them — they appear greyed with an amber <b>BILLED · INV-xxx</b> badge, and
+    picking one (or a quote whose project is already billed) asks you to confirm, so a second invoice for
+    extras or staged work stays possible but never happens by mis-click.</p>
     <h3>Quote not in the ERP?</h3>
     <p>Click <b>📑 Fill from Quote</b> at the top of the modal and upload the quote PDF (or a photo). The reader
     extracts the customer, quote reference and ex-VAT total and fills the same single line. Always sanity-check
@@ -1879,6 +1885,6 @@ function invHelpSection(sec) {
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
-<script src="shared.js?v=20260901a"></script>
+<script src="shared.js?v=20260901b"></script>
 </body>
 </html>
