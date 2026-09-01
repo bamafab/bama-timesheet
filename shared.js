@@ -28445,7 +28445,8 @@ async function exportCvrPDF() {
 // ═══════════════════════════════════════════════════════════════════════════
 // PAYMENTS DUE — unpaid supplier invoices to pay by a chosen date
 // Facts come from /api/supplier-invoices?status=unpaid; all bucketing/summing
-// is plain arithmetic here. Four toggles (all off by default): include overdue,
+// is plain arithmetic here. Four toggles: include overdue (ON by default —
+// unpaid past-due invoices must not vanish from a payment run), plus
 // include direct debits, include labour & subcontractors (rows the Labour &
 // Subcontractor Payments tab owns — CIS invoices + is_labour_supplier agencies),
 // include Bama South West (intercompany). Definitions live in the panel Help.

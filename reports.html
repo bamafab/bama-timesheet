@@ -307,7 +307,7 @@
           <button class="btn btn-ghost btn-sm" onclick="pdrPreset('7')">Next 7 days</button>
           <button class="btn btn-ghost btn-sm" onclick="pdrPreset('30')">Next 30 days</button>
         </div>
-        <label style="font-size:11.5px;color:var(--muted);display:flex;align-items:center;gap:5px"><input type="checkbox" id="pdrOverdue" onchange="renderPaymentsDueReport(true)"> include overdue</label>
+        <label style="font-size:11.5px;color:var(--muted);display:flex;align-items:center;gap:5px"><input type="checkbox" id="pdrOverdue" checked onchange="renderPaymentsDueReport(true)"> include overdue</label>
         <label style="font-size:11.5px;color:var(--muted);display:flex;align-items:center;gap:5px"><input type="checkbox" id="pdrDd" onchange="renderPaymentsDueReport(true)"> include direct debits</label>
         <label style="font-size:11.5px;color:var(--muted);display:flex;align-items:center;gap:5px"><input type="checkbox" id="pdrLabour" onchange="renderPaymentsDueReport(true)"> include labour &amp; subcontractors</label>
         <label style="font-size:11.5px;color:var(--muted);display:flex;align-items:center;gap:5px"><input type="checkbox" id="pdrBamaSw" onchange="renderPaymentsDueReport(true)"> include Bama South West</label>
@@ -320,7 +320,7 @@
       </div>
       <div id="pdrHelp" style="display:none;font-size:11.5px;color:var(--muted);line-height:1.6;background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:10px 12px;margin-bottom:10px">
         Every unpaid supplier invoice with a due date on or before the chosen date, grouped by supplier. Due dates come from each supplier's payment terms.
-        <strong>Include overdue</strong> (off by default) adds anything already past its due date — turn it on for a true "what do I owe right now" list.
+        <strong>Include overdue</strong> (on by default) keeps anything already past its due date in the list — untick it for a forward-only view of what falls due between today and the chosen date.
         <strong>Include direct debits</strong> (off by default) adds DD invoices, which the supplier collects automatically — flagged <em>DD</em> so you don't double-pay.
         <strong>Include labour &amp; subcontractors</strong> (off by default) adds CIS subcontractor invoices and labour-agency invoices — these are reported in the <em>Labour &amp; Subcontractor Payments</em> tab, so they're kept out of this list to stop them muddying the material/supplier payment run.
         <strong>Include Bama South West</strong> (off by default) adds intercompany invoices from Bama SW.
@@ -491,6 +491,6 @@
   </div>
 </div>
 
-<script src="shared.js?v=20260828b"></script>
+<script src="shared.js?v=20260901a"></script>
 </body>
 </html>
