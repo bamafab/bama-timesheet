@@ -41601,10 +41601,38 @@ function _certVarianceUpdate() {
     const certCum    = _r2(sumMoney(filled, inp => Number(inp.value) || 0));
     const appliedCum = _r2(sumMoney(inputs, inp => Number(inp.dataset.appliedCum) || 0));
     cmp(`Lines cum (${filled.length}/${inputs.length} filled)`, certCum, appliedCum);
+    // Hard reconciliation: the notice's Gross Valuation IS the QS's cumulative
+    // certified total. Per-line values can never sum above it — when they do,
+    // a Final Value / Rate column was read instead of Current Value (AFP06
+    // Linford Wood, 2026-09-02: +£25,534 of forecast-final canopy lines
+    // landed as "paid"). Red, not amber — this is an error, not over-cert.
+    const rec = _afpCertReconcile();
+    if (rec) {
+      if (rec.over) {
+        rows.push(`<div><b>Lines cum vs notice Gross Valuation:</b> <b style="color:var(--red)">✖ lines sum ${gbp2(rec.certCum)} EXCEEDS the certified Gross Valuation ${gbp2(rec.noticeCum)} by ${gbp2(rec.diff)}</b> <span style="color:var(--muted)">— impossible. Likely a Final Value / Rate column read as certified on lines the QS valued at 0 this period (amber lines above applied). Zero those lines before confirming.</span></div>`);
+      } else if (rec.allFilled && Math.abs(rec.diff) > 0.05) {
+        rows.push(`<div><b>Lines cum vs notice Gross Valuation:</b> <b style="color:${AMBER}">▼ lines sum ${gbp2(rec.certCum)} is ${gbp2(-rec.diff)} BELOW the notice ${gbp2(rec.noticeCum)}</b> <span style="color:var(--muted)">— some certified value is on lines left blank/under-read.</span></div>`);
+      } else if (rec.allFilled) {
+        rows.push(`<div><b>Lines cum vs notice Gross Valuation:</b> <span style="color:var(--green)">✓ reconciles (${gbp2(rec.noticeCum)})</span></div>`);
+      }
+    }
   }
   if (!rows.length) { el.style.display = 'none'; return; }
   el.style.display = '';
   el.innerHTML = rows.join('');
+}
+
+// Σ per-line certified cum vs the notice's printed Gross Valuation (from the
+// last parse). null when no notice figure is available (manual entry).
+function _afpCertReconcile() {
+  const noticeCum = _r2(Number(_afpCertParsed?.notice_gross_valuation_cum) || 0);
+  if (!(noticeCum > 0)) return null;
+  const inputs = [...document.querySelectorAll('#afpCertLineFields input')];
+  const filled = inputs.filter(inp => String(inp.value).trim() !== '');
+  if (!filled.length) return null;
+  const certCum = _r2(sumMoney(filled, inp => Number(inp.value) || 0));
+  const diff = _r2(certCum - noticeCum);
+  return { certCum, noticeCum, diff, over: diff > 0.05, allFilled: filled.length === inputs.length };
 }
 
 // Manual fallback / fast path: no OCR needed — copy our applied figures as the
@@ -41754,6 +41782,7 @@ Header rules:
 Line rules:
 - Some notices are SUMMARY-ONLY (e.g. RG Carter S3 single page: Gross Valuation / Less Retention / Less Previously Paid / Payment Due, breakdown "as attached" but not present). For those return "line_items": [].
 - When a per-line certification schedule IS included, certified_cumulative_value = the client's certified CUMULATIVE value-to-date for the line (in RG Carter breakdown pages this is the "Current Value" under the Certification columns, NOT the Application columns).
+- FINAL vs CURRENT: QS breakdowns pair columns as Final Qty / Current Qty / Unit / Rate / Final Value / Current Value. "Final Value" and "Rate" are the QS's forecast final account for the line — they are NEVER certified values. Use ONLY the Current Value column. A row that prints a Final % and Final Value but has NO Current Qty / Current Value (the cell is blank so the row shows fewer numbers) is certified at 0 for this valuation — return 0 for that line, never the Final Value. Sanity check before answering: the sum of your line values for a section must equal that section's certified total printed on the notice (e.g. "Variations 31,301.00") — if it does not, you have read the wrong column.
 - When a per-line certification schedule or breakdown IS included (in either document), match its rows to our application lines below by description and order, and fill certified_cumulative_value with the printed value VERBATIM. Never cap a value at, or adjust it toward, our applied figure — QSs certify above or below what we applied; report exactly what is printed. A printed blank/dash/0 against an item they list IS a certified value of 0.
 - A single figure covering MANY of our lines with no per-row values (e.g. one "Contract sum" number): leave those lines out — never estimate or split a total across lines.
 - Header totals ALWAYS come from the payment notice when one is provided, never from the supplementary breakdown.
@@ -41892,6 +41921,18 @@ async function uploadCertAndContinue() {
   if (!_afpDetailCurrent) return;
   const afp = _afpDetailCurrent;
   const btn = document.getElementById('afpCertUploadContinueBtn');
+  // Block a cert whose per-line values sum above the notice Gross Valuation —
+  // that can only be a mis-read column, and it poisons every later AFP's
+  // carry-forward (lines start "paid" that were never certified).
+  const rec = _afpCertReconcile();
+  if (rec && rec.over) {
+    const go = await bamaConfirm({
+      title: 'Per-line values exceed the certificate',
+      body: `Your per-line certified values sum to <b>${gbp2(rec.certCum)}</b>, but the notice certifies a Gross Valuation of <b>${gbp2(rec.noticeCum)}</b> — <b>${gbp2(rec.diff)} too much</b>.<br><br>The QS cannot have paid more than the notice total. Usually the parser read a <i>Final Value</i> column on lines certified at 0 this period. Zero the amber lines and re-check.<br><br>Confirm anyway? The next AFP will treat that ${gbp2(rec.diff)} as already paid.`,
+      confirmText: 'Confirm anyway', cancelText: 'Go back', tone: 'danger'
+    });
+    if (!go) return;
+  }
   try {
     if (btn) { btn.disabled = true; btn.textContent = 'Uploading…'; }
     setLoading(true);
