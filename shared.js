@@ -40264,6 +40264,50 @@ function _afpRenumberLines() {
   _afpLineRows.forEach((l, i) => { l.line_no = i + 1; });
 }
 
+// QB quotes rarely have QuoteLineItems, but the saved quote carries its cost
+// breakdown (cost_material, cost_installation, …) which /api/project-quotes
+// exposes as est_*. Those are pre-markup COSTS; the contract value is the
+// marked-up sell. Scale each category pro-rata (sell_i = cost_i / Σcost × sell)
+// so the SOV stage lines sum EXACTLY to the quote value — markup is spread
+// across stages, and any 2dp rounding drift lands on the largest line.
+// Deterministic arithmetic only; values remain editable in the modal.
+function _afpCategoryLinesFromQb(pq, section, itemNo, woNo) {
+  const CATS = [
+    ['est_design',       'Design & drawings'],
+    ['est_survey',       'Site survey'],
+    ['est_material',     'Supply of materials'],
+    ['est_fabrication',  'Fabrication'],
+    ['est_painting',     'Painting / protective coatings'],
+    ['est_galvanising',  'Galvanising'],
+    ['est_delivery',     'Delivery to site'],
+    ['est_installation', 'Installation on site'],
+    ['est_prelims',      'Preliminaries']
+  ];
+  const sell = Number(pq.quote_value || 0);
+  const cats = CATS.map(([k, label]) => ({ label, cost: Number(pq[k] || 0) }))
+                   .filter(c => c.cost > 0);
+  const costSum = cats.reduce((s, c) => s + c.cost, 0);
+  if (!(sell > 0) || !(costSum > 0)) return [];
+  const alloc = cats.map(c => ({ label: c.label, value: Math.round(c.cost / costSum * sell * 100) / 100 }));
+  const drift = Math.round((sell - alloc.reduce((s, a) => s + a.value, 0)) * 100) / 100;
+  if (drift !== 0) {
+    const big = alloc.reduce((m, a) => (a.value > m.value ? a : m), alloc[0]);
+    big.value = Math.round((big.value + drift) * 100) / 100;
+  }
+  return alloc.map(a => ({
+    section, item_no: itemNo,
+    item_description: pq.quote_project_name || pq.reference || '',
+    item_quote_ref: pq.reference || '',
+    item_wo_no: woNo,
+    source_quote_line_item_id: null,
+    description: a.label,
+    contract_value: a.value,
+    previous_pct_complete: 0,
+    this_app_pct_complete: 0,
+    gross_amount_paid: 0
+  }));
+}
+
 async function _afpPopulateSov(projectId) {
   // All non-cancelled AFPs in this project, most-recent first
   const projectAfps = _invAfpList
@@ -40298,6 +40342,9 @@ async function _afpPopulateSov(projectId) {
     if (pq.tender_id) {
       qlis = await api.get(`/api/quote-line-items?tender_id=${pq.tender_id}`).catch(() => []) || [];
     }
+    if (!qlis.length && pq.qb_quote_id) {
+      qlis = await api.get(`/api/quote-line-items?qb_quote_id=${pq.qb_quote_id}`).catch(() => []) || [];
+    }
     const mapped = (qlis || [])
       .filter(l => (Number(l.quantity || 0) * Number(l.unit_price || 0)) !== 0)
       .map(l => ({
@@ -40312,11 +40359,17 @@ async function _afpPopulateSov(projectId) {
         this_app_pct_complete: 0,
         gross_amount_paid: 0
       }));
-    // Fallback: quote has no usable line items (e.g. attached QB quote or a
-    // tender without a breakdown) — emit one line carrying the quote value so
-    // the item still appears in the SOV.
-    if (!mapped.length && Number(pq.quote_value || 0) !== 0) {
-      mapped.push({
+    if (mapped.length) return mapped;
+    // No usable QuoteLineItems — QB quotes carry their cost-category breakdown
+    // (est_design, est_material, …) on the project-quotes row. Break the SOV
+    // into stage lines from those so staged payments (e.g. 50% design, 25%
+    // installation) can be applied per stage.
+    const catLines = _afpCategoryLinesFromQb(pq, section, itemNo, contractNoNow());
+    if (catLines.length) return catLines;
+    // Final fallback: no breakdown at all — one line carrying the quote value
+    // so the item still appears in the SOV.
+    if (Number(pq.quote_value || 0) !== 0) {
+      return [{
         section, item_no: itemNo,
         item_description: pq.quote_project_name || pq.reference || '',
         item_quote_ref: pq.reference || '',
@@ -40327,9 +40380,9 @@ async function _afpPopulateSov(projectId) {
         previous_pct_complete: 0,
         this_app_pct_complete: 0,
         gross_amount_paid: 0
-      });
+      }];
     }
-    return mapped;
+    return [];
   };
 
   _afpLineRows = [];
