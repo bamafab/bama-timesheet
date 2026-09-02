@@ -40447,22 +40447,28 @@ async function _afpPopulateSov(projectId) {
     //    CERTIFIED, then auto-pull newly attached quotes as fresh Variations.
     const prevAfp = projectAfps[0];
     const liftedLines = [];
+    const unmatched = [];
     try {
       const detail = await api.get(`/api/applications/${prevAfp.id}`);
       _afpLineRows = (detail.line_items || []).map(l => {
         const cert = findCertLine(l);
         const cv = Number(l.contract_value || 0);
-        const paid = cert ? Number(cert.gross_amount_paid || 0) : Number(l.gross_amount_paid || 0);
-        let prevPct = cert ? Number(cert.this_app_pct_complete || 0) : Number(l.previous_pct_complete || 0);
-        // QS certified ABOVE what we applied (paid-to-date > cum applied):
-        // lift the line's starting % to the certified level — the value has
-        // been paid, so the next application must never claim it again.
-        // (Payless — paid BELOW applied — deliberately keeps our applied %,
-        // so the shortfall stays claimed on the next AFP.)
-        if (cv > 0 && paid - (cv * prevPct / 100) > 0.01) {
-          // Never above 100% — an application cannot claim more than the line.
-          prevPct = Math.min(100, Math.round((paid / cv) * 10000) / 100);
-          liftedLines.push(l.description);
+        // ONE model, both directions (2026-09-02, replaces the asymmetric
+        // 19/08 lift): prev % = the CERTIFIED / PAID level on the line,
+        // paid ÷ contract value, capped at 100. The claim itself is this_app %
+        // (cumulative applied), so a payless shortfall is still claimed —
+        // it simply shows as "this application £" instead of hiding inside
+        // prev %. Stevenage: 15/15/15/15 applied, QS paid 100/100/0/0 →
+        // prev 100/100/0/0, this-app 100/100/15/15.
+        let paid, prevPct;
+        if (cert) {
+          paid = Number(cert.gross_amount_paid || 0);
+          prevPct = cv > 0 ? Math.min(100, Math.round((paid / cv) * 10000) / 100) : 0;
+          if (cv > 0 && paid - Number(cert.cumulative_value ?? (cv * Number(cert.this_app_pct_complete || 0) / 100)) > 0.01) liftedLines.push(l.description);
+        } else {
+          paid = Number(l.gross_amount_paid || 0);
+          prevPct = Number(l.previous_pct_complete || 0);
+          if (lastCertified) unmatched.push(l.description);
         }
         return {
           section: l.section || 'measured',
@@ -40481,7 +40487,11 @@ async function _afpPopulateSov(projectId) {
     } catch (e) { _afpLineRows = []; }
     if (liftedLines.length) {
       const shown = liftedLines.slice(0, 3).join(', ');
-      toast(`${liftedLines.length} line${liftedLines.length > 1 ? 's' : ''} certified above your last application — starting % lifted to the paid level: ${shown}${liftedLines.length > 3 ? ` +${liftedLines.length - 3} more` : ''}`, 'warning');
+      toast(`${liftedLines.length} line${liftedLines.length > 1 ? 's' : ''} certified above your last application — starting at the paid level so that value isn't claimed again: ${shown}${liftedLines.length > 3 ? ` +${liftedLines.length - 3} more` : ''}`, 'warning');
+    }
+    if (unmatched.length) {
+      const shown = unmatched.slice(0, 3).join(', ');
+      toast(`${unmatched.length} line${unmatched.length > 1 ? 's' : ''} could not be matched to the last certificate (${lastCertified.ref}) — carried from the previous application instead: ${shown}${unmatched.length > 3 ? ` +${unmatched.length - 3} more` : ''}`, 'warning');
     }
 
     // VO auto-pull: any project quote whose reference isn't in the SOV yet
@@ -40679,7 +40689,7 @@ function _afpLineRowHtml(l, idx) {
       <input type="number" step="0.01" class="field-input" placeholder="Value £" style="font-size:12px;padding:5px 8px;text-align:right"
              value="${cv || ''}"
              oninput="_afpLineRows[${idx}].contract_value = parseFloat(this.value) || 0; updateAfpLineRowCalc(${idx})">
-      <div class="afp-prev" title="Cumulative % at last certified AFP"
+      <div class="afp-prev" title="Certified / paid to date (% of line value) — from the last certificate"
            style="font-size:11px;text-align:center;color:var(--muted)">${prev.toFixed(0)}%</div>
       <input type="range" min="0" max="100" step="5" value="${cum}"
              style="width:100%;accent-color:var(--accent)"
@@ -41687,7 +41697,7 @@ function certifyAfpInFull() {
     inp.value = inp.dataset.appliedCum || '';
   });
   _certVarianceUpdate();
-  toast('Copied applied figures — adjust any line they paid less on', 'info');
+  toast('Copied applied figures into EVERY line — zero any line the QS did not certify before confirming', 'warning');
 }
 
 function _afpCertMainLabelDefault() {
@@ -41873,7 +41883,19 @@ ${linesDesc}`
 
     let matched = 0;
     let summaryFilled = false, summaryMismatch = 0;
-    if (Array.isArray(parsed.line_items) && parsed.line_items.length) {
+    // Certified IN FULL: the notice's cumulative Gross Valuation equals our
+    // applied cumulative total → every line is certified at its applied cum.
+    // Deterministic; the AI's per-line reading is NOT used in this case (AFP06
+    // Linford: a breakdown's Final Value column was read as certified and
+    // planted £25,534 of phantom paid — impossible when the totals agree).
+    const _lineInputsAll = [...document.querySelectorAll('#afpCertLineFields input')];
+    const _appliedTotalAll = _r2c(_lineInputsAll.reduce((s, inp) => s + (Number(inp.dataset.appliedCum) || 0), 0));
+    const _noticeCumAll = _r2c(parsed.notice_gross_valuation_cum);
+    const certifiedInFull = _noticeCumAll > 0 && Math.abs(_noticeCumAll - _appliedTotalAll) <= 0.05;
+    if (certifiedInFull) {
+      _lineInputsAll.forEach(inp => { inp.value = _r2c(inp.dataset.appliedCum); matched++; });
+      summaryFilled = true;
+    } else if (Array.isArray(parsed.line_items) && parsed.line_items.length) {
       parsed.line_items.forEach(item => {
         const inp = document.querySelector(`#afpCertLineFields input[data-line-idx="${item.line_index - 1}"]`);
         if (inp && item.certified_cumulative_value != null) { inp.value = item.certified_cumulative_value; matched++; }
@@ -41893,7 +41915,7 @@ ${linesDesc}`
         carried++;
       }
     });
-    if (!(Array.isArray(parsed.line_items) && parsed.line_items.length)) {
+    if (!certifiedInFull && !(Array.isArray(parsed.line_items) && parsed.line_items.length)) {
       // Summary-only notice — no per-line certification. If the notice's
       // cumulative gross valuation reconciles with our applied cumulative
       // total, the QS certified the application as applied: fill every line
@@ -41933,7 +41955,7 @@ ${linesDesc}`
       : '';
     const extras = [];
     if (netDerived)     extras.push('this-period net derived from payment due + retention movement');
-    if (summaryFilled)  extras.push('summary-only notice — gross valuation matches your application, lines certified in full at applied values');
+    if (summaryFilled)  extras.push('notice Gross Valuation equals your applied cumulative — certified in full, every line set to its applied value (per-line breakdown not used)');
     if (carried)        extras.push(`${carried} previously-paid line${carried > 1 ? 's' : ''} with no new claim carried at the paid value`);
     if (overCert)       extras.push(`<b style="color:var(--orange, #f5a623)">${overCert} line${overCert > 1 ? 's' : ''} certified ABOVE applied</b> (amber) — on confirm, the next AFP will start ${overCert > 1 ? 'those lines' : 'that line'} at the certified level so you don't re-apply for value already paid`);
     const extraTxt = extras.length ? ` <i>(${extras.join('; ')})</i>` : '';
@@ -44804,7 +44826,13 @@ function _buildAfpPdfData(afp) {
           const cv = Number(l.contract_value || 0);
           const cumPct = Number(l.this_app_pct_complete || 0);
           const cumVal = l.cumulative_value != null ? Number(l.cumulative_value) : cv * cumPct / 100;
-          const paid = l.gross_amount_paid != null ? Number(l.gross_amount_paid) : 0;
+          // Paid £ on the application = paid BEFORE this application's own
+          // certificate, so a re-download always matches the document that
+          // was sent (certifying writes this cert's value into the line's
+          // gross_amount_paid; strip it back out here).
+          const paidNow  = l.gross_amount_paid != null ? Number(l.gross_amount_paid) : 0;
+          const certThis = l.certified_this_app_value != null ? Number(l.certified_this_app_value) : 0;
+          const paid = Math.round((paidNow - certThis) * 100) / 100;
           return {
             description: l.description || '',
             contractValue: cv,
