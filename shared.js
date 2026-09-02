@@ -36814,7 +36814,9 @@ function renderAfpProjectSidebar() {
 }
 
 function selectAfpProject(projectId) {
-  _afpSelectedProjectId = projectId;
+  // Toggle: clicking the already-selected project deselects it, so the global
+  // "+ New AFP" button goes back to the all-projects picker.
+  _afpSelectedProjectId = (_afpSelectedProjectId === projectId) ? null : projectId;
   renderAfpProjectSidebar();
   renderAfpRightPane();
 }
