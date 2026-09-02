@@ -275,7 +275,8 @@ app.http('project-quotes-list', {
                         q.cost_galvanising  AS est_galvanising,
                         q.cost_survey       AS est_survey,
                         q.cost_delivery     AS est_delivery,
-                        q.cost_prelims      AS est_prelims
+                        q.cost_prelims      AS est_prelims,
+                        q.quote_data        AS _qb_quote_data
                  FROM ProjectQuotes pq
                  LEFT JOIN Tenders t            ON t.id  = pq.tender_id
                  LEFT JOIN QuoteBuilderQuotes q ON q.id  = pq.qb_quote_id
@@ -284,7 +285,34 @@ app.http('project-quotes-list', {
                  ORDER BY pq.is_primary DESC, pq.added_at ASC`,
                 { projectId }
             );
-            return ok(result.recordset, request);
+            // QB quotes priced on explicit lines (type 'custom' → customLines,
+            // imported → standardLines) carry those lines only inside quote_data.
+            // Surface them as qb_lines [{desc, qty, price, value}] so the AFP SOV
+            // can itemise (gantry / ladder / …) instead of one lump line. The full
+            // quote_data (takeoff etc.) is stripped — too big for this list call.
+            const rows = result.recordset.map(r => {
+                const { _qb_quote_data, ...rest } = r;
+                let qbLines = [];
+                if (_qb_quote_data) {
+                    try {
+                        const qd = JSON.parse(_qb_quote_data);
+                        const src = qd.type === 'custom'
+                            ? (qd.customLines || [])
+                            : (qd.standardLines || []);
+                        qbLines = src
+                            .filter(l => l && l.kind !== 'heading')
+                            .map(l => {
+                                const qty = parseFloat(l.qty);
+                                const price = parseFloat(l.price) || 0;
+                                const value = Math.round(price * (isFinite(qty) && qty !== 0 ? qty : 1) * 100) / 100;
+                                return { key: l.key || null, desc: String(l.desc || '').trim(), qty: isFinite(qty) ? qty : 1, price, value };
+                            })
+                            .filter(l => l.value !== 0);
+                    } catch (e) { qbLines = []; }
+                }
+                return { ...rest, qb_lines: qbLines };
+            });
+            return ok(rows, request);
         } catch (err) {
             context.error('project-quotes-list:', err);
             return serverError('Failed to fetch project quotes', request);

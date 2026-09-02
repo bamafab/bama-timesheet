@@ -40283,12 +40283,29 @@ function _afpCategoryLinesFromQb(pq, section, itemNo, woNo) {
     ['est_installation', 'Installation on site'],
     ['est_prelims',      'Preliminaries']
   ];
+  const cats = CATS.map(([k, label]) => ({ label, value: Number(pq[k] || 0) }))
+                   .filter(c => c.value > 0);
+  return _afpSovLinesScaled(pq, cats, section, itemNo, woNo);
+}
+
+// QB quote priced on explicit lines (custom lump sums — "Gantry", "Ladder" —
+// or imported standard lines). Each line is already a sell figure; they still
+// go through the same normaliser so Σ === quote value exactly (headline may be
+// rounded / discounted vs the line sum).
+function _afpQbExplicitLines(pq, section, itemNo, woNo) {
+  const lines = (pq.qb_lines || [])
+    .filter(l => l && Number(l.value || 0) > 0)
+    .map(l => ({ label: l.desc || l.key || 'Item', value: Number(l.value) }));
+  return _afpSovLinesScaled(pq, lines, section, itemNo, woNo);
+}
+
+// Scale [{label, value}] pro-rata so Σ === pq.quote_value (2dp), rounding drift
+// on the largest line, and emit SOV rows. Deterministic arithmetic only.
+function _afpSovLinesScaled(pq, parts, section, itemNo, woNo) {
   const sell = Number(pq.quote_value || 0);
-  const cats = CATS.map(([k, label]) => ({ label, cost: Number(pq[k] || 0) }))
-                   .filter(c => c.cost > 0);
-  const costSum = cats.reduce((s, c) => s + c.cost, 0);
-  if (!(sell > 0) || !(costSum > 0)) return [];
-  const alloc = cats.map(c => ({ label: c.label, value: Math.round(c.cost / costSum * sell * 100) / 100 }));
+  const sum = parts.reduce((s, c) => s + c.value, 0);
+  if (!(sell > 0) || !(sum > 0) || !parts.length) return [];
+  const alloc = parts.map(c => ({ label: c.label, value: Math.round(c.value / sum * sell * 100) / 100 }));
   const drift = Math.round((sell - alloc.reduce((s, a) => s + a.value, 0)) * 100) / 100;
   if (drift !== 0) {
     const big = alloc.reduce((m, a) => (a.value > m.value ? a : m), alloc[0]);
@@ -40323,11 +40340,33 @@ async function _afpPopulateSov(projectId) {
       lastCertifiedLines = detail.line_items || [];
     } catch (e) { /* fall through with empty */ }
   }
-  const findCertLine = (sourceQliId, description) => {
-    let match = null;
-    if (sourceQliId) match = lastCertifiedLines.find(l => l.source_quote_line_item_id === sourceQliId);
-    if (!match) match = lastCertifiedLines.find(l => (l.description || '').trim() === (description || '').trim());
-    return match || null;
+  // Match a prior-cert line to a current SOV line. Descriptions repeat across
+  // items ("Fabrication", "Painting", "Delivery" appear under every quote), so
+  // description alone is ambiguous — it picked the FIRST "Fabrication" in the
+  // whole cert, from a different item, and its paid figure inflated the lift
+  // to 3000%+ (2026-09-02). Scope the match to the same item (quote ref,
+  // section, item_no) first; fall back to description-only ONLY when unique.
+  const _norm = s => String(s || '').trim().toLowerCase();
+  const findCertLine = (line) => {
+    if (line.source_quote_line_item_id) {
+      const m = lastCertifiedLines.find(l => l.source_quote_line_item_id === line.source_quote_line_item_id);
+      if (m) return m;
+    }
+    const d = _norm(line.description);
+    const ref = _norm(line.item_quote_ref);
+    const sameItem = lastCertifiedLines.filter(l =>
+      _norm(l.description) === d &&
+      (ref ? _norm(l.item_quote_ref) === ref
+           : (_norm(l.section) === _norm(line.section) && Number(l.item_no) === Number(line.item_no))));
+    if (sameItem.length === 1) return sameItem[0];
+    if (sameItem.length > 1) {
+      // Same item, same description twice — pin on contract value too
+      const byCv = sameItem.find(l => Math.abs(Number(l.contract_value || 0) - Number(line.contract_value || 0)) < 0.005);
+      if (byCv) return byCv;
+      return sameItem[0];
+    }
+    const byDesc = lastCertifiedLines.filter(l => _norm(l.description) === d);
+    return byDesc.length === 1 ? byDesc[0] : null;
   };
 
   // Project quotes: primary → Measured Works, additional → Variations
@@ -40360,10 +40399,13 @@ async function _afpPopulateSov(projectId) {
         gross_amount_paid: 0
       }));
     if (mapped.length) return mapped;
-    // No usable QuoteLineItems — QB quotes carry their cost-category breakdown
-    // (est_design, est_material, …) on the project-quotes row. Break the SOV
-    // into stage lines from those so staged payments (e.g. 50% design, 25%
-    // installation) can be applied per stage.
+    // No usable QuoteLineItems. QB quote priced on explicit lines (custom lump
+    // sums / imported standard lines) → use those lines verbatim.
+    const explicit = _afpQbExplicitLines(pq, section, itemNo, contractNoNow());
+    if (explicit.length) return explicit;
+    // Takeoff-priced QB quote → cost-category breakdown (est_design,
+    // est_material, …) scaled to sell, so staged payments (50% design, 25%
+    // installation…) can be applied per stage.
     const catLines = _afpCategoryLinesFromQb(pq, section, itemNo, contractNoNow());
     if (catLines.length) return catLines;
     // Final fallback: no breakdown at all — one line carrying the quote value
@@ -40412,7 +40454,7 @@ async function _afpPopulateSov(projectId) {
     try {
       const detail = await api.get(`/api/applications/${prevAfp.id}`);
       _afpLineRows = (detail.line_items || []).map(l => {
-        const cert = findCertLine(l.source_quote_line_item_id, l.description);
+        const cert = findCertLine(l);
         const cv = Number(l.contract_value || 0);
         const paid = cert ? Number(cert.gross_amount_paid || 0) : Number(l.gross_amount_paid || 0);
         let prevPct = cert ? Number(cert.this_app_pct_complete || 0) : Number(l.previous_pct_complete || 0);
@@ -40422,7 +40464,8 @@ async function _afpPopulateSov(projectId) {
         // (Payless — paid BELOW applied — deliberately keeps our applied %,
         // so the shortfall stays claimed on the next AFP.)
         if (cv > 0 && paid - (cv * prevPct / 100) > 0.01) {
-          prevPct = Math.round((paid / cv) * 10000) / 100;
+          // Never above 100% — an application cannot claim more than the line.
+          prevPct = Math.min(100, Math.round((paid / cv) * 10000) / 100);
           liftedLines.push(l.description);
         }
         return {
@@ -40435,7 +40478,7 @@ async function _afpPopulateSov(projectId) {
           description: l.description,
           contract_value: cv,
           previous_pct_complete: prevPct,
-          this_app_pct_complete: Math.max(Number(l.this_app_pct_complete || 0), prevPct),
+          this_app_pct_complete: Math.min(100, Math.max(Number(l.this_app_pct_complete || 0), prevPct)),
           gross_amount_paid: paid
         };
       });
