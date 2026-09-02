@@ -36814,9 +36814,7 @@ function renderAfpProjectSidebar() {
 }
 
 function selectAfpProject(projectId) {
-  // Toggle: clicking the already-selected project deselects it, so the global
-  // "+ New AFP" button goes back to the all-projects picker.
-  _afpSelectedProjectId = (_afpSelectedProjectId === projectId) ? null : projectId;
+  _afpSelectedProjectId = projectId;
   renderAfpProjectSidebar();
   renderAfpRightPane();
 }
@@ -40168,16 +40166,15 @@ let _afpImportMeta = null;         // { application_no } when SOV came from an A
 
 // ── Project picker (opens when user clicks + New AFP without selecting one) ──
 function openAfpProjectPicker() {
-  if (_afpSelectedProjectId) {
-    openNewAfpModal(_afpSelectedProjectId);
-    return;
-  }
+  // Always show the all-projects picker, pre-selected on the sidebar project
+  // (if any) so the common case is one click — but a project WITHOUT any AFP
+  // yet is always reachable from here too.
   const sel = document.getElementById('afpPickerProjectSelect');
   const projects = (_invProjectsCache || []).slice().sort((a, b) =>
     (a.project_name || '').localeCompare(b.project_name || '')
   );
   sel.innerHTML = '<option value="">— pick a project —</option>'
-    + projects.map(p => `<option value="${p.id}">${escapeHtml(p.project_number || '')} — ${escapeHtml(p.project_name || '')}</option>`).join('');
+    + projects.map(p => `<option value="${p.id}"${p.id === _afpSelectedProjectId ? ' selected' : ''}>${escapeHtml(p.project_number || '')} — ${escapeHtml(p.project_name || '')}</option>`).join('');
   document.getElementById('afpProjectPickerModal').classList.add('active');
 }
 function closeAfpProjectPicker() {
@@ -40365,8 +40362,7 @@ async function _afpPopulateSov(projectId) {
       if (byCv) return byCv;
       return sameItem[0];
     }
-    const byDesc = lastCertifiedLines.filter(l => _norm(l.description) === d);
-    return byDesc.length === 1 ? byDesc[0] : null;
+    return null; // no cross-item matching — a wrong item's paid figure is worse than none
   };
 
   // Project quotes: primary → Measured Works, additional → Variations
