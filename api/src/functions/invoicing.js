@@ -705,8 +705,8 @@ app.http('applications-certificate-confirm', {
                     certificate_ref     = @certificateRef,
                     certificate_date    = @certificateDate,
                     certificate_final_payment_date = @certFinalPaymentDate,
-                    status              = 'Certified',
-                    certified_at        = GETUTCDATE(),
+                    status              = CASE WHEN status = 'Invoiced' THEN 'Invoiced' ELSE 'Certified' END,
+                    certified_at        = CASE WHEN certified_at IS NULL THEN GETUTCDATE() ELSE certified_at END,
                     updated_at          = GETUTCDATE()
                  WHERE id = @id`,
                 {

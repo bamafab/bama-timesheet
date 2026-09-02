@@ -41286,7 +41286,13 @@ async function openAfpDetail(id) {
 
     editBtn.style.display       = (afp.status === 'Draft') ? '' : 'none';
     submitBtn.style.display     = (afp.status === 'Draft') ? '' : 'none';
-    certUploadBtn.style.display = (afp.status === 'Submitted') ? '' : 'none';
+    // Cert upload on Submitted; AMEND on Certified/Invoiced — per-line certified
+    // values can be corrected without un-certifying (an Invoiced AFP cannot be
+    // un-certified, but a mis-read breakdown must still be fixable, else every
+    // later AFP inherits phantom "paid" lines).
+    const canAmendCert = afp.status === 'Certified' || afp.status === 'Invoiced';
+    certUploadBtn.style.display = (afp.status === 'Submitted' || canAmendCert) ? '' : 'none';
+    certUploadBtn.textContent   = canAmendCert ? '✎ Amend Certificate' : '+ Upload Certificate';
     genInvBtn.style.display     = (afp.status === 'Certified') ? '' : 'none';
     const uncertBtn = document.getElementById('afpDetailUncertifyBtn');
     if (uncertBtn) uncertBtn.style.display = (afp.status === 'Certified') ? '' : 'none';
@@ -41465,15 +41471,31 @@ function openCertUploadModal() {
   const _analyseBtn = document.getElementById('afpCertAnalyseBtn');
   if (_analyseBtn) { _analyseBtn.disabled = true; _analyseBtn.textContent = '🤖 Analyse'; }
   document.getElementById('afpCertOcrStatus').style.display = 'none';
-  document.getElementById('afpCertRef').value = '';
-  document.getElementById('afpCertDate').value = new Date().toISOString().slice(0, 10);
+  const afpC = _afpDetailCurrent;
+  const amend = afpC.status === 'Certified' || afpC.status === 'Invoiced';
   const _cfpd = document.getElementById('afpCertFinalDue');
-  if (_cfpd) _cfpd.value = _afpDetailCurrent.certificate_final_payment_date
-      ? String(_afpDetailCurrent.certificate_final_payment_date).slice(0, 10) : '';
-  document.getElementById('afpCertNetVal').value = '';
-  document.getElementById('afpCertVat').value = '';
-  document.getElementById('afpCertRet').value = '';
-  document.getElementById('afpCertGross').value = '';
+  if (_cfpd) _cfpd.value = afpC.certificate_final_payment_date
+      ? String(afpC.certificate_final_payment_date).slice(0, 10) : '';
+  if (amend) {
+    // Pre-fill what is currently recorded so only the wrong lines need editing
+    document.getElementById('afpCertRef').value    = afpC.certificate_ref || '';
+    document.getElementById('afpCertDate').value   = afpC.certificate_date ? String(afpC.certificate_date).slice(0, 10) : new Date().toISOString().slice(0, 10);
+    document.getElementById('afpCertNetVal').value = afpC.certified_value_net  != null ? Number(afpC.certified_value_net).toFixed(2)  : '';
+    document.getElementById('afpCertVat').value    = afpC.certified_vat        != null ? Number(afpC.certified_vat).toFixed(2)        : '';
+    document.getElementById('afpCertRet').value    = afpC.certified_retention  != null ? Number(afpC.certified_retention).toFixed(2)  : '';
+    document.getElementById('afpCertGross').value  = afpC.certified_gross      != null ? Number(afpC.certified_gross).toFixed(2)      : '';
+  } else {
+    document.getElementById('afpCertRef').value = '';
+    document.getElementById('afpCertDate').value = new Date().toISOString().slice(0, 10);
+    document.getElementById('afpCertNetVal').value = '';
+    document.getElementById('afpCertVat').value = '';
+    document.getElementById('afpCertRet').value = '';
+    document.getElementById('afpCertGross').value = '';
+  }
+  const _title = document.querySelector('#afpCertModal .modal-title');
+  if (_title) _title.textContent = amend ? `✎ Amend Payment Certificate — ${afpC.ref}` : '📑 Upload Payment Certificate';
+  const _cbtn = document.getElementById('afpCertUploadContinueBtn');
+  if (_cbtn) _cbtn.textContent = amend ? 'Save Amended Certificate' : 'Upload & Confirm';
   // Applied-figure hints under the header inputs, so what WE applied is on
   // screen while typing what THEY certified.
   const _hint = (id, v) => { const h = document.getElementById(id); if (h) h.textContent = `applied ${gbp2(v || 0)}`; };
@@ -41484,6 +41506,7 @@ function openCertUploadModal() {
   const _varEl = document.getElementById('afpCertVariance');
   if (_varEl) _varEl.style.display = 'none';
   renderAfpCertLineFields();
+  if (amend) _certVarianceUpdate(); // inputs are pre-filled — show the reconciliation straight away
   document.getElementById('afpCertModal').classList.add('active');
 }
 
@@ -41534,14 +41557,22 @@ function renderAfpCertLineFields() {
     const appliedCum = l.cumulative_value != null
       ? Number(l.cumulative_value)
       : Number(l.contract_value || 0) * Number(l.this_app_pct_complete || 0) / 100;
-    const prevPaid = Number(l.gross_amount_paid || 0);
+    // Amend mode: the line already carries this cert's value inside
+    // gross_amount_paid — show the PRE-cert base as "previously paid" and
+    // pre-fill the input with the currently recorded certified cumulative.
+    const amend = _afpDetailCurrent.status === 'Certified' || _afpDetailCurrent.status === 'Invoiced';
+    const certThis = l.certified_this_app_value != null ? Number(l.certified_this_app_value) : null;
+    const prevPaid = amend && certThis != null
+      ? Number(l.gross_amount_paid || 0) - certThis
+      : Number(l.gross_amount_paid || 0);
+    const preset = amend && certThis != null ? Number(l.gross_amount_paid || 0).toFixed(2) : '';
     return `
     <div style="display:grid;grid-template-columns:1fr 92px 92px 100px;gap:6px;align-items:center;font-size:12px">
       <div style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding-left:14px"
            title="${escapeHtml(l.description || '')}">${escapeHtml(l.description || '')}</div>
       <div style="text-align:right;color:var(--muted)" title="Our applied cumulative">£${fmt(appliedCum)}</div>
-      <div style="text-align:right;color:var(--subtle)" title="Previously paid">£${fmt(prevPaid)}</div>
-      <input type="number" step="0.01" class="field-input" placeholder="Cert cum £"
+      <div style="text-align:right;color:var(--subtle)" title="Previously paid (before this certificate)">£${fmt(prevPaid)}</div>
+      <input type="number" step="0.01" class="field-input" placeholder="Cert cum £" value="${preset}"
              data-line-id="${l.id}" data-line-idx="${i}" data-applied-cum="${appliedCum.toFixed(2)}" data-prev-paid="${prevPaid.toFixed(2)}"
              oninput="_certVarianceUpdate()"
              style="font-size:12px;padding:4px 6px;text-align:right">
@@ -41625,7 +41656,15 @@ function _certVarianceUpdate() {
 // Σ per-line certified cum vs the notice's printed Gross Valuation (from the
 // last parse). null when no notice figure is available (manual entry).
 function _afpCertReconcile() {
-  const noticeCum = _r2(Number(_afpCertParsed?.notice_gross_valuation_cum) || 0);
+  let noticeCum = _r2(Number(_afpCertParsed?.notice_gross_valuation_cum) || 0);
+  if (!(noticeCum > 0) && _afpDetailCurrent) {
+    // No parsed notice (manual / amend): the certified cumulative gross
+    // valuation = previous certificate carried on this AFP + this-period
+    // pre-retention net entered above. Plain arithmetic, no estimation.
+    const prev = Number(_afpDetailCurrent.previous_certificate_value || 0);
+    const net  = Number(document.getElementById('afpCertNetVal')?.value) || 0;
+    if (net > 0) noticeCum = _r2(prev + net);
+  }
   if (!(noticeCum > 0)) return null;
   const inputs = [...document.querySelectorAll('#afpCertLineFields input')];
   const filled = inputs.filter(inp => String(inp.value).trim() !== '');
@@ -41993,7 +42032,7 @@ async function uploadCertAndContinue() {
       line_items:           lineItems
     });
 
-    toast(`AFP ${afp.ref} certified ✓`, 'success');
+    toast(`AFP ${afp.ref} ${(afp.status === 'Certified' || afp.status === 'Invoiced') ? 'certificate amended' : 'certified'} ✓`, 'success');
     closeCertUploadModal();
     closeAfpDetail();
     await loadInvoicingData();
