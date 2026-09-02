@@ -40518,11 +40518,30 @@ async function _afpPopulateSov(projectId) {
   // "Less Previous Contractor Certificate" auto-suggest — Σ certified net of
   // all prior certified/invoiced AFPs (editable; matches the Excel's E28)
   if (!_afpEditing) {
-    const prevCertSum = projectAfps
-      .filter(a => a.status === 'Certified' || a.status === 'Invoiced')
-      .reduce((s, a) => s + Number(a.certified_value_net || 0), 0);
+    // "Less Previous Contractor Certificate" = the QS's cumulative certified
+    // gross (pre-retention) to date. Two ways to get it:
+    //   chain — from the LAST certificate alone: its own "less previous" +
+    //           its this-period net. Only needs the last cert to be right.
+    //   sum   — Σ this-period nets of ALL prior certified AFPs. Breaks
+    //           silently when any prior AFP is missing/uncertified in the
+    //           system (legacy onboarding) — Brookhurst AFP07 showed a
+    //           £160k amount due because of this (2026-09-02).
+    // Chain wins; sum is the cross-check. Provenance + any disagreement is
+    // shown under the field so a less experienced user sees it.
+    const certifiedPrior = projectAfps.filter(a => a.status === 'Certified' || a.status === 'Invoiced');
+    const prevCertSum = _r2(certifiedPrior.reduce((s, a) => s + Number(a.certified_value_net || 0), 0));
+    const chain = lastCertified
+      ? _r2(Number(lastCertified.previous_certificate_value || 0) + Number(lastCertified.certified_value_net || 0))
+      : 0;
+    const prevCertVal = chain > 0 ? chain : prevCertSum;
     const prevCertEl = document.getElementById('afpNewPrevCert');
-    if (prevCertEl) prevCertEl.value = prevCertSum ? prevCertSum.toFixed(2) : '0';
+    if (prevCertEl) prevCertEl.value = prevCertVal ? prevCertVal.toFixed(2) : '0';
+    _afpPrevCertProvenance = lastCertified ? {
+      ref: lastCertified.ref, chain, sum: prevCertSum,
+      prev: Number(lastCertified.previous_certificate_value || 0),
+      net: Number(lastCertified.certified_value_net || 0),
+      nPrior: certifiedPrior.length
+    } : null;
 
     // Contract No + retention % carried from the most recent AFP (per-project sticky)
     if (projectAfps.length) {
@@ -40745,6 +40764,8 @@ function _afpComputeTotals() {
   return { cumTotal: +cumTotal.toFixed(2), prevCert, grossVal: +grossVal.toFixed(2), retentionPct, retention, vat, due };
 }
 
+let _afpPrevCertProvenance = null; // set by _afpPopulateSov for the hint under the field
+
 function recalcAfpTotals() {
   const t = _afpComputeTotals();
   const fmt = v => '£' + Number(v).toLocaleString('en-GB', { minimumFractionDigits: 2 });
@@ -40755,6 +40776,49 @@ function recalcAfpTotals() {
   set('afpTotalRetention', fmt(t.retention));
   set('afpTotalVat', fmt(t.vat));
   set('afpTotalGross', fmt(t.due));
+  _afpPrevCertHint(t);
+}
+
+// Under the "Less Previous Certificate" field: where the number came from, and
+// two deterministic cross-checks that catch the failure modes seen so far.
+//   1. chain vs Σ prior nets disagree → a prior AFP is missing/mis-certified.
+//   2. (Value of Application − Less Prev Cert) vs Σ per-line (cum − paid):
+//      both describe "what we're claiming this period" from two independent
+//      data sources (header chain vs per-line paid). They MUST agree.
+function _afpPrevCertHint(t) {
+  const el = document.getElementById('afpNewPrevCertHint');
+  if (!el) return;
+  const AMBER = 'var(--orange, #f5a623)';
+  const rows = [];
+  const pv = _afpPrevCertProvenance;
+  if (_afpEditing) {
+    rows.push('Saved with this application — edit only if the certificate differs.');
+  } else if (!pv) {
+    rows.push(_afpLineRows.some(l => Number(l.gross_amount_paid || 0) > 0)
+      ? `<span style="color:${AMBER}">⚠ No certified prior AFP on this project, yet lines carry paid values — check the history.</span>`
+      : 'First application — no previous certificate.');
+  } else {
+    rows.push(`From ${escapeHtml(pv.ref)} certificate: ${gbp2(pv.prev)} previous + ${gbp2(pv.net)} this period = <b>${gbp2(pv.chain)}</b>.`);
+    if (pv.chain > 0 && Math.abs(pv.chain - pv.sum) > 0.05) {
+      rows.push(`<span style="color:${AMBER}">⚠ Σ of the ${pv.nPrior} certified AFPs in the system is ${gbp2(pv.sum)} — differs by ${gbp2(Math.abs(pv.chain - pv.sum))}. Usually an earlier AFP is missing or was certified with a wrong net. The certificate chain value above is used.</span>`);
+    }
+    if (!(pv.chain > 0) && pv.sum > 0) {
+      rows.push(`<span style="color:${AMBER}">⚠ ${escapeHtml(pv.ref)} has no "less previous" recorded — fell back to Σ prior nets (${gbp2(pv.sum)}). Verify against the last certificate.</span>`);
+    }
+  }
+  // Per-line reconciliation (independent of provenance)
+  const linesClaim = _r2(_afpLineRows.reduce((s, l) =>
+    s + (Number(l.contract_value || 0) * Number(l.this_app_pct_complete || 0) / 100) - Number(l.gross_amount_paid || 0), 0));
+  const headerClaim = _r2(t.cumTotal - t.prevCert);
+  const paidSum = _r2(_afpLineRows.reduce((s, l) => s + Number(l.gross_amount_paid || 0), 0));
+  if (paidSum > 0 || t.prevCert > 0) {
+    if (Math.abs(linesClaim - headerClaim) > 0.05) {
+      rows.push(`<span style="color:var(--red)">✖ This application by header = <b>${gbp2(headerClaim)}</b>, but Σ per-line (applied − paid) = <b>${gbp2(linesClaim)}</b>. Per-line paid totals ${gbp2(paidSum)} vs Less Previous Certificate ${gbp2(t.prevCert)}. One of them is wrong — do not submit until they agree.</span>`);
+    } else {
+      rows.push(`<span style="color:var(--green)">✓ Header and per-line paid agree (${gbp2(headerClaim)} this application).</span>`);
+    }
+  }
+  el.innerHTML = rows.join('<br>');
 }
 
 // ═══ AFP IMPORT — onboard a mid-project job from its latest AFP file ═══════

@@ -1395,7 +1395,7 @@
           <label class="field-label">Less Previous Contractor Certificate £</label>
           <input type="number" step="0.01" class="field-input" id="afpNewPrevCert"
                  placeholder="0.00" oninput="recalcAfpTotals()">
-          <div style="font-size:10px;color:var(--subtle);margin-top:2px">Auto-filled from prior certified AFPs — edit if their certificate differs.</div>
+          <div id="afpNewPrevCertHint" style="font-size:10px;color:var(--subtle);margin-top:2px;line-height:1.5">Auto-filled from the last certificate — edit if it differs.</div>
         </div>
         <div>
           <label class="field-label">Retention %</label>
@@ -1885,6 +1885,6 @@ function invHelpSection(sec) {
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
-<script src="shared.js?v=20260902g"></script>
+<script src="shared.js?v=20260902h"></script>
 </body>
 </html>
