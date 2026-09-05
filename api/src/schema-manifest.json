@@ -967,6 +967,16 @@
       "seedForms": []
     },
     {
+      "script": "create-client-errors.sql",
+      "title": "Browser-side errors reported by the global window.onerror /",
+      "kind": "structural",
+      "tables": [
+        "ClientErrors"
+      ],
+      "columns": [],
+      "seedForms": []
+    },
+    {
       "script": "create-clients-tenders.sql",
       "title": "Clients table",
       "kind": "structural",
