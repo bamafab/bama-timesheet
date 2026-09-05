@@ -833,6 +833,58 @@
 </div>
 
 <script>
+// === BAMA client-error reporter — canonical copy lives in shared.js; quote-builder.html and dashboard.html carry byte-identical standalone copies (they don't load shared.js). tests/client-error-copies.js fails the build if they drift. Edit shared.js, then paste. ===
+(function () {
+  if (window.__bamaClientErrorReporterInstalled) return;
+  window.__bamaClientErrorReporterInstalled = true;
+  var API = 'https://bama-erp-api-deauckd2cja7ebd5.uksouth-01.azurewebsites.net';
+  var MAX_PER_SESSION = 10;           // a loop can't flood: session cap here, 20/min per user server-side
+  var seen = {}, sent = 0;
+  var page = ((location.pathname.split('/').pop() || 'hub').replace(/\.html$/, '')) || 'hub';
+  function tokenNow() { try { return sessionStorage.getItem('bama_token') || ''; } catch (e) { return ''; } }
+  function report(kind, message, stack, extra) {
+    try {
+      message = String(message || '').slice(0, 1000);
+      if (!message || /^Script error\.?$/.test(message)) return;   // opaque cross-origin error — carries no information
+      var key = kind + '|' + message + '|' + String(stack || '').split('\n').slice(0, 2).join('|');
+      if (seen[key]) return;                                         // de-duplicated within the session
+      seen[key] = 1;
+      if (++sent > MAX_PER_SESSION) return;
+      var token = tokenNow();
+      if (!token) return;                                            // API requires auth — nothing useful to do
+      var body = JSON.stringify({
+        page: page, message: message, stack: String(stack || '').slice(0, 8000),
+        url: location.href.split('#')[0], userAgent: navigator.userAgent,
+        extra: Object.assign({ kind: kind, lastApiRequestId: window.__bamaLastApiRequestId || null, when: new Date().toISOString() }, extra || {})
+      });
+      fetch(API + '/api/client-error', { method: 'POST', keepalive: true,
+        headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' }, body: body }).catch(function () {});
+    } catch (e) { /* the reporter itself must never throw */ }
+  }
+  window.addEventListener('error', function (ev) {
+    try {
+      if (!ev || (!ev.error && !ev.message)) return;   // <img>/<script> load failures and empty events — not JS errors
+      var err = ev.error;
+      var where = ev.filename ? (String(ev.filename).split('/').pop() + ':' + ev.lineno + ':' + ev.colno) : undefined;
+      report('error', (err && err.message) || ev.message || 'Unknown error', (err && err.stack) || '', { source: where });
+    } catch (e) {}
+  }, true);
+  window.addEventListener('unhandledrejection', function (ev) {
+    try {
+      var r = ev && ev.reason;
+      if (r && (r.status === 401 || r.name === 'AbortError')) return;     // session expiry / cancelled fetch — expected, not a fault
+      var msg = (r && r.message) ? r.message : (typeof r === 'string' ? r : (r ? JSON.stringify(r).slice(0, 300) : 'Unhandled promise rejection'));
+      report('unhandledrejection', msg, (r && r.stack) || '', { status: r && r.status, requestId: r && r.requestId });
+    } catch (e) {}
+  });
+  // Manual hook for caught-but-noteworthy failures: bamaReportClientError(err, {context:'...'})
+  window.bamaReportClientError = function (err, extra) {
+    try { report('manual', (err && err.message) || String(err), (err && err.stack) || '', extra); } catch (e) {}
+  };
+})();
+// === end BAMA client-error reporter ===
+</script>
+<script>
 // Anthropic calls go through the server-side proxy (/api/claude-proxy), which
 // holds the API key in Function App settings. No key in client code.
 // Full URL required — SWA does not proxy /api/* to the Function App automatically.
@@ -3277,9 +3329,13 @@ async function trFetch(path, opts = {}) {
     ...opts,
     headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json', ...(opts.headers||{}) }
   });
+  const requestId = res.headers.get('X-Request-Id') || null;   // observability hook — for error reports only
+  if (requestId) window.__bamaLastApiRequestId = requestId;
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
-    throw new Error(err.error || `API ${res.status}`);
+    const e = new Error(err.error || `API ${res.status}`);
+    e.status = res.status; e.requestId = requestId;
+    throw e;
   }
   return res.status === 204 ? null : res.json();
 }

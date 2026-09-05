@@ -9,6 +9,57 @@ const API_BASE = 'https://bama-erp-api-deauckd2cja7ebd5.uksouth-01.azurewebsites
 // Change the model here + in api/src/functions/claude-proxy.js, nowhere else.
 const AI_MODEL = 'claude-sonnet-4-6';
 
+// === BAMA client-error reporter — canonical copy lives in shared.js; quote-builder.html and dashboard.html carry byte-identical standalone copies (they don't load shared.js). tests/client-error-copies.js fails the build if they drift. Edit shared.js, then paste. ===
+(function () {
+  if (window.__bamaClientErrorReporterInstalled) return;
+  window.__bamaClientErrorReporterInstalled = true;
+  var API = 'https://bama-erp-api-deauckd2cja7ebd5.uksouth-01.azurewebsites.net';
+  var MAX_PER_SESSION = 10;           // a loop can't flood: session cap here, 20/min per user server-side
+  var seen = {}, sent = 0;
+  var page = ((location.pathname.split('/').pop() || 'hub').replace(/\.html$/, '')) || 'hub';
+  function tokenNow() { try { return sessionStorage.getItem('bama_token') || ''; } catch (e) { return ''; } }
+  function report(kind, message, stack, extra) {
+    try {
+      message = String(message || '').slice(0, 1000);
+      if (!message || /^Script error\.?$/.test(message)) return;   // opaque cross-origin error — carries no information
+      var key = kind + '|' + message + '|' + String(stack || '').split('\n').slice(0, 2).join('|');
+      if (seen[key]) return;                                         // de-duplicated within the session
+      seen[key] = 1;
+      if (++sent > MAX_PER_SESSION) return;
+      var token = tokenNow();
+      if (!token) return;                                            // API requires auth — nothing useful to do
+      var body = JSON.stringify({
+        page: page, message: message, stack: String(stack || '').slice(0, 8000),
+        url: location.href.split('#')[0], userAgent: navigator.userAgent,
+        extra: Object.assign({ kind: kind, lastApiRequestId: window.__bamaLastApiRequestId || null, when: new Date().toISOString() }, extra || {})
+      });
+      fetch(API + '/api/client-error', { method: 'POST', keepalive: true,
+        headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' }, body: body }).catch(function () {});
+    } catch (e) { /* the reporter itself must never throw */ }
+  }
+  window.addEventListener('error', function (ev) {
+    try {
+      if (!ev || (!ev.error && !ev.message)) return;   // <img>/<script> load failures and empty events — not JS errors
+      var err = ev.error;
+      var where = ev.filename ? (String(ev.filename).split('/').pop() + ':' + ev.lineno + ':' + ev.colno) : undefined;
+      report('error', (err && err.message) || ev.message || 'Unknown error', (err && err.stack) || '', { source: where });
+    } catch (e) {}
+  }, true);
+  window.addEventListener('unhandledrejection', function (ev) {
+    try {
+      var r = ev && ev.reason;
+      if (r && (r.status === 401 || r.name === 'AbortError')) return;     // session expiry / cancelled fetch — expected, not a fault
+      var msg = (r && r.message) ? r.message : (typeof r === 'string' ? r : (r ? JSON.stringify(r).slice(0, 300) : 'Unhandled promise rejection'));
+      report('unhandledrejection', msg, (r && r.stack) || '', { status: r && r.status, requestId: r && r.requestId });
+    } catch (e) {}
+  });
+  // Manual hook for caught-but-noteworthy failures: bamaReportClientError(err, {context:'...'})
+  window.bamaReportClientError = function (err, extra) {
+    try { report('manual', (err && err.message) || String(err), (err && err.stack) || '', extra); } catch (e) {}
+  };
+})();
+// === end BAMA client-error reporter ===
+
 // Shared helper — routes all AI calls through the server-side proxy
 // (/api/claude-proxy), which holds the Anthropic key in Function App settings.
 // The key is NEVER present in client-side code. Auth (Bearer token) and the
@@ -84,6 +135,10 @@ async function apiCall(method, endpoint, body = null, _isRetry = false) {
   if (body && method !== 'GET') opts.body = JSON.stringify(body);
 
   const res = await fetch(`${API_BASE}${endpoint}`, opts);
+  // X-Request-Id (observability hook) — quoted in error reports so support can
+  // find the exact invocation in Application Insights. Never shown in toasts.
+  const requestId = res.headers.get('X-Request-Id') || null;
+  if (requestId) window.__bamaLastApiRequestId = requestId;
 
   if (res.status === 401 && !_isRetry) {
     // Token might be expired — try silent refresh first
@@ -106,6 +161,7 @@ async function apiCall(method, endpoint, body = null, _isRetry = false) {
     const err = new Error(errBody.error || `API ${method} ${endpoint} failed (${res.status})`);
     err.status = res.status;
     err.body = errBody;
+    err.requestId = requestId;
     throw err;
   }
 
