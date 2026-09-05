@@ -2423,7 +2423,13 @@ timer (the 2026-08-10 Serverless cost rule holds):
   a *returned* 500 as `success=true`, and most of ours are returned via
   `serverError()`. Requests are excluded from sampling in `host.json`, so the
   count is exact. Expect the email ~5–12 min after the failures (ingestion +
-  evaluation lag).
+  evaluation lag). **Tested 2026-09-05:** 6 × `diag-throw` at ~18:10 → alert
+  email ~18:22 (12 min). Portal gotchas: the rule must be created from the
+  *Application Insights* resource's Alerts blade, not the Function App's (same
+  name — the Function App scope has no `requests` table and fails Details
+  validation); the rule name cannot contain `>`; "Query must be specified"
+  means the KQL wasn't committed on the Condition tab — paste, wait for the
+  preview chart to render, then Next.
 - **`api/src/functions/observability.js`** — ONE `app.hook.postInvocation`
   hook, zero handler edits: stamps `X-Request-Id: <invocationId>` on every
   response (exposed via `Access-Control-Expose-Headers`); on any status ≥ 500
@@ -2466,7 +2472,9 @@ SQL database → Data management → Backups → Retention policies before relyi
 on it)**. Backups need nothing from us and nothing here touches SQL on a timer.
 
 - **RPO ≤ 10 minutes** (the transaction-log backup interval — the most data a
-  restore can lose). **RTO: measured in the drill below.**
+  restore can lose). **RTO ≈ 30 minutes** (measured 27 min, 2026-09-05 — see
+  drill log). Add ~5 min to repoint `SQL_CONNECTION_STRING` + restart the
+  Function App in a real recovery.
 - **Drill procedure** (rehearse at least twice a year, from the office — the
   server firewall blocks home IPs so Query Editor won't connect from home):
   1. portal → SQL server `bama-erp-sql` → database `bama-erp` → top toolbar
@@ -2483,9 +2491,10 @@ on it)**. Backups need nothing from us and nothing here touches SQL on a timer.
      seconds while resumed — never leave a restore copy behind.
   5. Record below.
 - **Drill log**
-  | Date | Restore point | Copy online after | RTO (measured) | Row counts | Run by |
+  | Date | Restore point (UTC) | Create → Online | RTO (measured) | Row counts (copy vs live) | Run by |
   |---|---|---|---|---|---|
-  | _pending — Mateusz to run (Session 2)_ | | | | | |
+  | 2026-09-05 | 16:19 | 17:52 → ~18:19 BST | **~27 min** | Projects 88/88 (max id 91) · Invoices 330/330 (max id 553) · ClockEntries 382/382 (max id 405) · ChangeLog 168/168 — identical; copy deleted after | Mateusz |
+  Lessons: the portal's *Deployment start time* drifted backwards while restoring — ignore it, time from the Create click. No progress indicator exists; refresh the SQL databases list. 27 min for a 32 GB-tier Serverless DB with ~1k rows in the big tables is the log-chain replay + resume cost, not data volume — plan on ~30 min RTO.
 - **Real recovery** = the same steps with the LIVE name: restore to
   `bama-erp-restored`, verify, then either repoint `SQL_CONNECTION_STRING` on
   the Function App to the restored database (fastest — Function App restart
