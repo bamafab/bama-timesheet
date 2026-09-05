@@ -2526,6 +2526,7 @@ async function initDashGate() {
         tenders: !!row.tenders,
         editQuotes: !!row.edit_quotes,
         viewQuotes: !!row.view_quotes,
+        userAccess: !!row.user_access,   // gates the Health › Diagnostics box
       };
     });
   } catch(e) {
@@ -3319,7 +3320,7 @@ function switchDashTab(tab) {
   document.getElementById('dashHealthView').style.display   = tab === 'health'   ? '' : 'none';
   if (tab === 'tenders' && !_trTenders.length) loadTenderRegister();
   if (tab === 'overview') loadOverview();
-  if (tab === 'health' && !_healthData) { runHealthCheck(); loadChangeLog(); loadSchemaCheck(); }
+  if (tab === 'health' && !_healthData) { runHealthCheck(); loadChangeLog(); loadSchemaCheck(); loadClientErrors(); showDiagBoxIfAllowed(); }
 }
 
 // ── API fetch helper ──────────────────────────────────────────
@@ -4216,6 +4217,46 @@ async function trResendNotify(tenderId) {
   <div id="hcMigrations" style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:14px">
     <div style="color:var(--muted);font-size:12px">Press ↻ Check database to inspect the live schema.</div>
   </div>
+
+  <!-- Client errors — browser-side faults reported by the global handler (Session 2, 2026-09-05) -->
+  <div style="display:flex;align-items:center;gap:10px;margin:26px 0 6px;flex-wrap:wrap">
+    <h3 style="margin:0;font-size:15px">🐞 Client errors</h3>
+    <select id="hcCeDays" onchange="loadClientErrors()" style="background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:4px 8px;color:var(--text);font-size:12px">
+      <option value="7" selected>last 7 days</option><option value="14">last 14 days</option><option value="30">last 30 days</option><option value="90">last 90 days</option>
+    </select>
+    <button class="btn btn-ghost btn-sm" onclick="loadClientErrors()">↻ Refresh</button>
+    <button class="btn btn-ghost btn-sm" id="hcCeCsvBtn" onclick="exportClientErrorsCsv()">⬇ CSV</button>
+    <span style="font-size:11px;color:var(--muted)">what broke in someone's browser — without them having to tell you</span>
+  </div>
+  <div id="hcClientErrors" style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:4px 0">
+    <div style="text-align:center;padding:24px;color:var(--muted);font-size:12px">Loading…</div>
+  </div>
+  <details style="margin-top:8px;font-size:11.5px;color:var(--muted);line-height:1.6">
+    <summary style="cursor:pointer;color:var(--subtle)">❓ How this works / something looks wrong?</summary>
+    <div style="padding:8px 4px 2px">
+      Every ERP page installs a global error handler (<code>shared.js</code>; standalone copies in Quote Builder and this
+      dashboard). An uncaught JavaScript error or unhandled promise rejection is posted to <code>/api/client-error</code>
+      with the page, message, stack, URL (hash stripped) and the user's login email — nothing else. Rows are grouped here by
+      page + message; click a row for the latest stack trace and URL. Reports are de-duplicated per browser session, capped
+      at 10 per session and 20 per minute per user server-side, so a page stuck in a loop cannot flood the table.<br>
+      <strong>Nothing here is deleted automatically</strong> — the table has no purge job (SQL Serverless cost rule); this view is simply
+      date-bounded (max 90 days). Server-side (API) failures are NOT in this list — they go to Application Insights
+      (<em>bama-erp-api-ai → Failures</em>) and the <em>Http 5xx</em> alert emails Mateusz when there are more than 5 in 5 minutes.
+      Every API response carries an <code>X-Request-Id</code>; a report's <code>lastApiRequestId</code> is the invocation to look up there.<br>
+      <strong>Empty when it shouldn't be?</strong> (1) the ClientErrors migration hasn't been run — a red note appears above and
+      Database migrations lists <code>create-client-errors.sql</code>; (2) the user had no Microsoft token in that tab (nothing is
+      sent without one); (3) the error was an opaque cross-origin <em>Script error.</em>, which carries no information and is skipped.
+      Use the CSV to paste rows into a chat when asking for a fix.
+    </div>
+  </details>
+  <div id="hcDiagBox" style="display:none;margin-top:12px;background:var(--card);border:1px dashed var(--border);border-radius:8px;padding:10px 14px">
+    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+      <strong style="font-size:12.5px">🧪 Diagnostics</strong>
+      <button class="btn btn-ghost btn-sm" onclick="diagThrowClientError()">Throw test client error</button>
+      <button class="btn btn-ghost btn-sm" onclick="diagForceServer500s()">Force 6 server 500s</button>
+      <span style="font-size:11px;color:var(--muted)">proves the plumbing end-to-end — the client error should appear above within a minute; six 500s trip the alert email. Harmless: no data is touched.</span>
+    </div>
+  </div>
 </div>
 </div>
 
@@ -4856,6 +4897,123 @@ function renderSchemaCheck() {
             ? `<div style="font-size:10.5px;color:#ff9b9b;margin-top:2px">not in the database: ${m.missing.slice(0, 8).map(escHtml).join(', ')}${m.missing.length > 8 ? ` +${m.missing.length - 8} more` : ''}</div>` : ''}
         </div></div>`;
     }).join('') : '<div style="font-size:12px;color:var(--muted)">Nothing outstanding.</div>'}`;
+}
+</script>
+
+<script>
+// ═══ Client errors (GET /api/client-errors) — Session 2, 2026-09-05 ═══
+// Browser faults reported by the global handler, grouped by page + message.
+let _clientErrors = null;
+const _ceHue = key => { let h = 0; const s = String(key); for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0; return h % 360; };
+function _ceDays() { const v = parseInt(document.getElementById('hcCeDays')?.value, 10); return Number.isFinite(v) && v > 0 ? Math.min(v, 90) : 7; }
+function _ceChip(page) {
+  const hu = _ceHue(page || '');
+  return `<span style="display:inline-block;padding:2px 9px;border-radius:20px;background:hsla(${hu},70%,55%,.14);border:1px solid hsla(${hu},70%,60%,.45);color:hsl(${hu},75%,72%);font-size:11px;font-family:var(--font-mono)">${escHtml(page || '?')}</span>`;
+}
+
+async function loadClientErrors() {
+  const el = document.getElementById('hcClientErrors');
+  if (!el) return;
+  el.innerHTML = '<div style="text-align:center;padding:24px;color:var(--muted);font-size:12px">Loading…</div>';
+  try {
+    _clientErrors = await trFetch(`/api/client-errors?days=${_ceDays()}`);
+    renderClientErrors();
+  } catch (e) {
+    el.innerHTML = `<div style="text-align:center;padding:24px;color:var(--red);font-size:12px">Could not load client errors: ${escHtml(e.message)}</div>`;
+  }
+}
+
+function renderClientErrors() {
+  const el = document.getElementById('hcClientErrors');
+  const d = _clientErrors; if (!el || !d) return;
+  const days = d.days || _ceDays();
+  if (d.table_missing) {
+    el.innerHTML = `<div style="padding:16px;color:#ff6b6b;font-size:12px"><strong>ClientErrors table not created yet.</strong> Run <code>api/sql/create-client-errors.sql</code> (new table — no restart). Reports are being dropped until then — see Database migrations above.</div>`;
+    return;
+  }
+  const groups = Array.isArray(d.groups) ? d.groups : [];
+  if (!groups.length) {
+    el.innerHTML = `<div style="text-align:center;padding:24px;color:var(--green);font-size:12px">No client errors in the last ${days} days.</div>`;
+    return;
+  }
+  const occurrences = groups.reduce((s, g) => s + (Number(g.error_count) || 0), 0);
+  const users = new Set(); groups.forEach(g => String(g.users || '').split(',').map(x => x.trim()).filter(Boolean).forEach(u => users.add(u)));
+  const pages = new Set(groups.map(g => g.page));
+  const summary = `<div style="display:flex;gap:14px;flex-wrap:wrap;padding:10px 12px 6px;font-size:12px;color:var(--muted)">
+      <span><strong style="color:var(--text);font-size:15px">${groups.length}</strong> distinct</span>
+      <span><strong style="color:var(--text);font-size:15px">${occurrences}</strong> occurrence${occurrences === 1 ? '' : 's'}</span>
+      <span><strong style="color:var(--text);font-size:15px">${users.size}</strong> user${users.size === 1 ? '' : 's'}</span>
+      <span><strong style="color:var(--text);font-size:15px">${pages.size}</strong> page${pages.size === 1 ? '' : 's'}</span>
+      <span style="margin-left:auto">last ${days} days · click a row for the stack</span></div>`;
+  const head = `<div style="display:grid;grid-template-columns:120px 1fr 60px 170px 130px;gap:10px;padding:6px 12px;border-bottom:1px solid var(--border);font-size:10.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em">
+      <span>Page</span><span>Message</span><span style="text-align:right">Count</span><span>User(s)</span><span style="text-align:right">Last seen</span></div>`;
+  const rows = groups.map((g, i) => {
+    const n = Number(g.error_count) || 0;
+    const countColor = n >= 20 ? 'var(--red)' : n >= 5 ? '#eab308' : 'var(--text)';
+    const zebra = i % 2 ? 'background:rgba(255,255,255,.02);' : '';
+    return `<div style="${zebra}border-bottom:1px solid var(--border)">
+      <div onclick="const s=this.nextElementSibling;s.style.display=s.style.display==='none'?'':'none'" title="${escAttr(g.message)}" style="display:grid;grid-template-columns:120px 1fr 60px 170px 130px;gap:10px;align-items:center;padding:7px 12px;font-size:12px;cursor:pointer">
+        <span>${_ceChip(g.page)}</span>
+        <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escHtml(g.message)}</span>
+        <span style="text-align:right;font-family:var(--font-mono);font-weight:700;color:${countColor}">${n}</span>
+        <span style="color:var(--subtle);overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escAttr(g.users || '')}">${escHtml(g.users || '—')}${Number(g.user_count) > 3 ? ` <span style="color:var(--muted)">+${Number(g.user_count) - 3}</span>` : ''}</span>
+        <span style="text-align:right;color:var(--muted);font-family:var(--font-mono);font-size:11px">${escHtml(g.last_seen || '')}</span>
+      </div>
+      <div style="display:none;padding:4px 12px 12px 142px;font-size:11px;color:var(--muted)">
+        <div>first seen <span style="font-family:var(--font-mono)">${escHtml(g.first_seen || '')}</span> · last URL <span style="font-family:var(--font-mono);word-break:break-all">${escHtml(g.last_url || '—')}</span></div>
+        <pre style="margin:6px 0 0;padding:8px 10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;white-space:pre-wrap;word-break:break-all;max-height:220px;overflow:auto;color:var(--text);font-size:10.5px">${escHtml(g.last_stack || '(no stack captured)')}</pre>
+      </div>
+    </div>`;
+  }).join('');
+  el.innerHTML = summary + head + rows;
+}
+
+// CSV of the individual rows (not the grouped view) — robustness DoD export path.
+async function exportClientErrorsCsv() {
+  const days = _ceDays();
+  try {
+    const d = await trFetch(`/api/client-errors?days=${days}&raw=1`);
+    const rows = (d && d.rows) || [];
+    if (!rows.length) { toast(`No client errors in the last ${days} days`, 'success'); return; }
+    const cols = ['occurred_at', 'page', 'message', 'user_email', 'url', 'user_agent', 'request_id', 'extra', 'stack'];
+    const esc = v => { const s = v == null ? '' : String(v); return /[",\n\r]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; };
+    const lines = [cols.join(',')].concat(rows.map(r => cols.map(c => esc(r[c])).join(',')));
+    const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a'); a.href = url;
+    a.download = `client-errors-${days}d-${new Date().toISOString().slice(0, 10)}.csv`;
+    document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+    toast(`${rows.length} rows exported`, 'success');
+  } catch (e) {
+    toast('CSV export failed: ' + e.message, 'error');
+  }
+}
+
+// ── Diagnostics (userAccess permission only) ─────────────────────────────────
+function _dashHasPerm(key) {
+  const p = _dashCurrentUser && _dashUserPerms && _dashUserPerms[_dashCurrentUser];
+  return !!(p && p[key]);
+}
+function showDiagBoxIfAllowed() {
+  const box = document.getElementById('hcDiagBox');
+  if (box) box.style.display = _dashHasPerm('userAccess') ? '' : 'none';
+}
+// A REAL uncaught throw (not a caught one) so the global handler is what reports it.
+function diagThrowClientError() {
+  const stamp = new Date().toISOString();
+  setTimeout(() => { throw new Error(`BAMA test client error ${stamp}`); }, 0);
+  toast('Test error thrown — the row appears below in a few seconds', 'success');
+  setTimeout(loadClientErrors, 4000);
+}
+// Six deliberate 500s trip the alert rule (Http 5xx > 5 in 5 min). No data touched.
+async function diagForceServer500s() {
+  if (!await bamaConfirm('Send 6 deliberate server errors to /api/diag-throw? This trips the Http 5xx alert email (matt@bamafabrication.co.uk). No data is touched.', 'Force server 500s')) return;
+  let got500 = 0, other = 0;
+  for (let i = 0; i < 6; i++) {
+    try { await trFetch('/api/diag-throw?confirm=yes'); other++; }
+    catch (e) { if (e.status === 500) got500++; else other++; }
+  }
+  toast(got500 === 6 ? '6 × 500 sent — alert email due within ~5–10 minutes' : `${got500} × 500, ${other} unexpected — check the API is deployed`, got500 === 6 ? 'success' : 'error');
 }
 </script>
 

@@ -108,6 +108,28 @@ function afterInvocation(hookCtx) {
     hookCtx.result = stampRequestId(hookCtx.result, requestId);
 }
 
+// ── GET /api/diag-throw?confirm=yes — a deliberate, harmless 500 ─────────────
+// Exercises the hook end-to-end (throw → CORS'd 500 → [5xx] log → Http 5xx
+// metric) and is how the alert rule is tested: six calls inside five minutes
+// trip "Http 5xx > 5". requireAuth so it can't be hammered anonymously; never
+// touches SQL. Driven from ED › Health › Diagnostics (userAccess permission).
+app.http('diag-throw-preflight', {
+    methods: ['OPTIONS'], authLevel: 'anonymous', route: 'diag-throw',
+    handler: async (request) => require('../responses').preflight(request)
+});
+app.http('diag-throw', {
+    methods: ['GET'], authLevel: 'anonymous', route: 'diag-throw',
+    handler: async (request, context) => {
+        const auth = await require('../auth').requireAuth(request);
+        if (auth.status) return auth;
+        if (request.query.get('confirm') !== 'yes') {
+            return require('../responses').badRequest('Add ?confirm=yes to throw a deliberate test error', request);
+        }
+        context.warn(`diag-throw: deliberate test error requested by ${auth.email || 'unknown'}`);
+        throw new Error('Deliberate test error (GET /api/diag-throw) — this is expected, not a fault');
+    }
+});
+
 if (app && app.hook && typeof app.hook.postInvocation === 'function') {
     app.hook.postInvocation((ctx) => {
         // The hook must never be the thing that fails a request.

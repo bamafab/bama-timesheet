@@ -17,7 +17,7 @@ let registeredHook = null;
 const origLoad = Module._load;
 Module._load = function (request, parent, isMain) {
     if (request === '@azure/functions') {
-        return { app: { hook: { postInvocation(fn) { registeredHook = fn; } } } };
+        return { app: { http() {}, hook: { postInvocation(fn) { registeredHook = fn; } } } };
     }
     return origLoad.apply(this, arguments);
 };
