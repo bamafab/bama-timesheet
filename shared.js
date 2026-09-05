@@ -41185,7 +41185,11 @@ async function saveAndSubmitAfp() {
     }
     const full = await api.get(`/api/applications/${saved.id}`);
     await loadLogoDataUri();
-    const pdfData = _buildAfpPdfData(full);
+    // The PDF is rendered BEFORE /submit stamps submitted_at (so a PDF or
+    // SharePoint failure can't leave a Submitted AFP with no document), so
+    // the row is still a Draft here — stamp the issue date now or the saved
+    // PDF prints "Date: Draft" (Mateusz, 2026-09-05).
+    const pdfData = _buildAfpPdfData({ ...full, submitted_at: full.submitted_at || new Date().toISOString() });
     const pdfBlob = await renderBamaAfpPDF(pdfData);
 
     // SharePoint upload — best effort. Each project gets its own
@@ -41456,7 +41460,9 @@ async function submitAfpFromDetail() {
     if (btn) { btn.disabled = true; btn.textContent = 'Submitting…'; }
     setLoading(true);
     await loadLogoDataUri();
-    const pdfData = _buildAfpPdfData(afp);
+    // Same as saveAndSubmitAfp: render precedes /submit, so stamp the issue
+    // date or the saved PDF prints "Date: Draft".
+    const pdfData = _buildAfpPdfData({ ...afp, submitted_at: afp.submitted_at || new Date().toISOString() });
     const pdfBlob = await renderBamaAfpPDF(pdfData);
     let driveItem = null;
     const project = (_invProjectsCache || []).find(p => p.id === afp.project_id);
