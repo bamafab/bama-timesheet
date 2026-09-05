@@ -10,8 +10,28 @@ on:
       - main
 
 jobs:
+  verify:
+    # Gate: node --check shared.js, preflight.py, every self-contained tests/*.js
+    # (tests/run-gates.sh). Red blocks the deploy job below.
+    if: github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.action != 'closed')
+    runs-on: ubuntu-latest
+    name: Verify (gates)
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install Acorn (preflight parser)
+        run: npm install -g acorn@8
+      - name: Run gates
+        run: bash tests/run-gates.sh
+
   build_and_deploy_job:
     if: github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.action != 'closed')
+    needs: verify
     runs-on: ubuntu-latest
     name: Build and Deploy Job
     steps:

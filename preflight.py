@@ -30,7 +30,13 @@ import sys, os, re, glob, subprocess, tempfile
 
 # ── locate acorn (installed under the user's global npm modules) ──────────────
 def find_acorn():
+    # CI (tests/run-gates.sh) sets ACORN_BIN explicitly; local runs fall back to search.
+    if os.environ.get('ACORN_BIN') and os.path.exists(os.environ['ACORN_BIN']):
+        return os.environ['ACORN_BIN']
+    here = os.path.dirname(os.path.abspath(__file__))
     candidates = [
+        os.path.join(here, 'node_modules', 'acorn', 'bin', 'acorn'),
+        os.path.join(here, 'tests', 'node_modules', 'acorn', 'bin', 'acorn'),
         os.path.expanduser('~/.npm-global/lib/node_modules/ts-node/node_modules/acorn/bin/acorn'),
         os.path.expanduser('~/.npm-global/lib/node_modules/acorn/bin/acorn'),
     ]
@@ -59,7 +65,9 @@ def extract_inline_js(html):
 # ── CHECK 1: syntax via Acorn ─────────────────────────────────────────────────
 def check_syntax(js, fname):
     if not ACORN:
-        return [("WARN", "Acorn not found — skipping syntax check")]
+        # PREFLIGHT_STRICT=1 (CI): a missing parser is a failure, not a skipped check.
+        level = "ERROR" if os.environ.get('PREFLIGHT_STRICT') == '1' else "WARN"
+        return [(level, "Acorn not found — syntax check not run (set ACORN_BIN)")]
     with tempfile.NamedTemporaryFile('w', suffix='.js', delete=False, encoding='utf-8') as tf:
         tf.write(js)
         path = tf.name
