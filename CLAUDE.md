@@ -2406,8 +2406,9 @@ Both workflows trigger on push to `main`:
 The system tells us when it breaks. Three layers, none of which touch SQL on a
 timer (the 2026-08-10 Serverless cost rule holds):
 
-- **Application Insights** on the Function App (`bama-erp-api-ai`, workspace
-  `bama-erp-logs`, UK South; app setting `APPLICATIONINSIGHTS_CONNECTION_STRING`).
+- **Application Insights** on the Function App — resource **`bama-erp-api`**
+  (same name as the Function App; enabled at creation, app setting
+  `APPLICATIONINSIGHTS_CONNECTION_STRING` already present — confirmed 2026-09-05).
   Adaptive sampling is on in `host.json` with requests excluded from sampling.
   Traces = `context.log/warn/error`; every invocation's `operation_Id` equals
   the `X-Request-Id` we return (below). Expected cost: free tier / < £5 a month.
