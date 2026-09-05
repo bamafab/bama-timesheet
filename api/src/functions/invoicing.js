@@ -942,8 +942,49 @@ app.http('applications-generate-invoice', {
     }
 });
 
-// Cancel an AFP (soft) — status=Cancelled, application_no burned.
-// Replaces the DELETE stub since deletion is not allowed.
+// Cancel an AFP.
+//   Draft      → HARD DELETE (line items, attachments, row). Nothing left the
+//                building, so the number is freed and nextAfpRef (MAX+1) hands
+//                it out again. Logged to ChangeLog as hard_delete.
+//   Submitted / Certified → soft cancel (status=Cancelled, row kept, number
+//                burned) — a PDF was issued to the client, so that ref must
+//                never be reused for a different document.
+//   Invoiced   → refused (void the invoice first).
+// Mateusz 2026-09-05: S1969 AFP07 draft was cancelled after a wrong prior
+// certificate and burned the number; a draft cancel must free it.
+async function cancelOrDeleteAfp(id, auth) {
+    const existing = await query('SELECT id, ref, status, invoice_id FROM Applications WHERE id = @id', { id });
+    if (!existing.recordset.length) return { error: 'notFound' };
+    const afp = existing.recordset[0];
+    if (afp.status === 'Invoiced' || afp.invoice_id) {
+        return { error: 'Cannot cancel an Invoiced AFP — void the linked invoice first' };
+    }
+    if (afp.status === 'Cancelled') return { error: 'Already cancelled' };
+
+    if (afp.status === 'Draft') {
+        await query(
+            `DELETE FROM InvoiceAttachments
+             WHERE parent_kind IN ('application','application_certificate') AND parent_id = @id`, { id });
+        await query('DELETE FROM ApplicationLineItems WHERE application_id = @id', { id });
+        await logChange('application', id, afp.ref || ('AFP#' + id), 'hard_delete',
+            afp.status, null, auth.name || auth.email);
+        await query('DELETE FROM Applications WHERE id = @id', { id });
+        return { id, deleted: true, ref: afp.ref };
+    }
+
+    await query(
+        `UPDATE Applications SET
+            status       = 'Cancelled',
+            cancelled_at = GETUTCDATE(),
+            updated_at   = GETUTCDATE()
+         WHERE id = @id`,
+        { id }
+    );
+    await logChange('application', id, afp.ref || ('AFP#' + id), 'cancelled',
+        afp.status, 'Cancelled', auth.name || auth.email);
+    return { id, status: 'Cancelled', ref: afp.ref };
+}
+
 app.http('applications-cancel', {
     methods: ['POST'],
     authLevel: 'anonymous',
@@ -953,23 +994,10 @@ app.http('applications-cancel', {
         if (auth.status) return auth;
         try {
             const id = parseInt(request.params.id);
-            const existing = await query('SELECT status FROM Applications WHERE id = @id', { id });
-            if (!existing.recordset.length) return notFound('Application not found', request);
-            if (existing.recordset[0].status === 'Invoiced') {
-                return badRequest('Cannot cancel an Invoiced AFP — void the linked invoice first', request);
-            }
-            if (existing.recordset[0].status === 'Cancelled') {
-                return badRequest('Already cancelled', request);
-            }
-            await query(
-                `UPDATE Applications SET
-                    status       = 'Cancelled',
-                    cancelled_at = GETUTCDATE(),
-                    updated_at   = GETUTCDATE()
-                 WHERE id = @id`,
-                { id }
-            );
-            return ok({ id, status: 'Cancelled' }, request);
+            const r = await cancelOrDeleteAfp(id, auth);
+            if (r.error === 'notFound') return notFound('Application not found', request);
+            if (r.error) return badRequest(r.error, request);
+            return ok(r, request);
         } catch (err) {
             context.error('Error cancelling AFP:', err);
             return serverError('Failed to cancel application: ' + err.message, request);
@@ -977,7 +1005,7 @@ app.http('applications-cancel', {
     }
 });
 
-// Keep the DELETE route registered too, but route it to cancel-style behaviour
+// DELETE route — same Draft-hard-delete / issued-soft-cancel split as /cancel.
 app.http('applications-delete', {
     methods: ['DELETE'],
     authLevel: 'anonymous',
@@ -987,20 +1015,10 @@ app.http('applications-delete', {
         if (auth.status) return auth;
         try {
             const id = parseInt(request.params.id);
-            const existing = await query('SELECT status FROM Applications WHERE id = @id', { id });
-            if (!existing.recordset.length) return notFound('Application not found', request);
-            if (existing.recordset[0].status === 'Invoiced') {
-                return badRequest('Cannot cancel an Invoiced AFP', request);
-            }
-            await query(
-                `UPDATE Applications SET
-                    status       = 'Cancelled',
-                    cancelled_at = GETUTCDATE(),
-                    updated_at   = GETUTCDATE()
-                 WHERE id = @id`,
-                { id }
-            );
-            return ok({ id, status: 'Cancelled' }, request);
+            const r = await cancelOrDeleteAfp(id, auth);
+            if (r.error === 'notFound') return notFound('Application not found', request);
+            if (r.error) return badRequest(r.error, request);
+            return ok(r, request);
         } catch (err) {
             context.error('Error cancelling AFP:', err);
             return serverError('Failed to cancel application: ' + err.message, request);

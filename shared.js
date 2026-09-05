@@ -41493,15 +41493,20 @@ async function submitAfpFromDetail() {
 async function cancelAfp() {
   if (!_afpDetailCurrent) return;
   const afp = _afpDetailCurrent;
+  // Draft → hard delete, number freed (nothing was issued). Submitted /
+  // Certified → soft cancel, number stays burned (a PDF went to the client).
+  const isDraft = afp.status === 'Draft';
   const confirmed = await showConfirmAsync(
-    'Cancel AFP?',
-    `<p>Cancelling <b>${escapeHtml(afp.ref)}</b> burns its number — the next AFP for this project will skip it. This is irreversible.</p>`,
-    { okLabel: 'Cancel AFP', cancelLabel: 'Keep' }
+    isDraft ? 'Delete draft AFP?' : 'Cancel AFP?',
+    isDraft
+      ? `<p>Draft <b>${escapeHtml(afp.ref)}</b> will be deleted permanently. Its number is freed — the next AFP raised for this project will be <b>${escapeHtml(afp.ref)}</b> again.</p>`
+      : `<p>Cancelling <b>${escapeHtml(afp.ref)}</b> burns its number — the next AFP for this project will skip it, because this document has already been issued. This is irreversible.</p>`,
+    { okLabel: isDraft ? 'Delete draft' : 'Cancel AFP', cancelLabel: 'Keep' }
   );
   if (!confirmed) return;
   try {
-    await api.post(`/api/applications/${afp.id}/cancel`, {});
-    toast('AFP cancelled', 'success');
+    const r = await api.post(`/api/applications/${afp.id}/cancel`, {});
+    toast(r && r.deleted ? `Draft ${afp.ref} deleted — number freed` : 'AFP cancelled', 'success');
     closeAfpDetail();
     await loadInvoicingData();
     renderInvAfpsTable();
