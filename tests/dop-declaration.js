@@ -94,14 +94,20 @@ const pdfData = (block.match(/function _dopPdfData[\s\S]*?\n}/m) || [''])[0];
 ok(/filter\(c => String\(c\.performance \|\| ''\)\.trim\(\)\)/.test(pdfData),
    'blank characteristics are filtered out of the PDF, not printed as empty claims');
 const render = (shared.match(/function drawDopPDF[\s\S]*?\n  return doc;\n}/m) || [''])[0];
+
+// House-style helpers (PDF house-style, 2026-08): footer + logo sizing live in
+// bamaDocHeader()/bamaDocFooter(), so the renderer is checked for the call and
+// the helper for the behaviour.
+const houseHeader = (shared.match(/^function bamaDocHeader\([\s\S]*?^}/m) || [''])[0];
+const houseFooter = (shared.match(/^function bamaDocFooter\([\s\S]*?^}/m) || [''])[0];
 ['Unique identification code', 'Intended use', 'Manufacturer',
  'System of assessment', 'Declared performance'].forEach(c =>
   ok(render.includes(c), `prescribed clause present: ${c}`));
 ok(/sole\s+\n?\s*'?\+?\s*'?responsibility of the manufacturer/.test(render) || /sole/.test(render),
    'the statutory sole-responsibility statement is present');
 ok(/Construction Products Regulations/.test(render), 'cites the Construction Products Regulations');
-ok(/getImageProperties/.test(render), 'logo sized via getImageProperties');
-ok(/Page \$\{p\} of \$\{total\}/.test(render), 'page X of Y footer');
+ok(/bamaDocHeader\(/.test(render) && /getImageProperties/.test(houseHeader), 'logo sized via getImageProperties in the house header');
+ok(/bamaDocFooter\(/.test(render) && /Page \$\{p\} of \$\{total\}/.test(houseFooter), 'page X of Y footer via the house footer');
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

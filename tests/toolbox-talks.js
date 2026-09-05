@@ -76,11 +76,17 @@ ok(/talk_title/.test(api), 'the title is stored on the delivery');
 
 console.log('\nPaper route works too');
 const pdf = (shared.match(/function drawTbtPDF[\s\S]*?\n  return doc;\n}/m) || [''])[0];
+
+// House-style helpers (PDF house-style, 2026-08): footer + logo sizing live in
+// bamaDocHeader()/bamaDocFooter(), so the renderer is checked for the call and
+// the helper for the behaviour.
+const houseHeader = (shared.match(/^function bamaDocHeader\([\s\S]*?^}/m) || [''])[0];
+const houseFooter = (shared.match(/^function bamaDocFooter\([\s\S]*?^}/m) || [''])[0];
 ok(/spareRows/.test(pdf),                      'blank rows are printed for walk-ups');
 ok(/spareRows: 14/.test(block),                'the print-blank route gives plenty of lines');
 ok(/doc\.line\(mL \+ wName \+ wRole \+ 2, y \+ 9/.test(pdf), 'a ruled signature line when there is no e-signature');
 ok(/I CONFIRM I ATTENDED AND UNDERSTOOD/.test(pdf), 'the register carries a confirmation statement');
-ok(/Page \$\{p\} of \$\{total\}/.test(pdf),    'page X of Y footer');
+ok(/bamaDocFooter\(/.test(pdf) && /Page \$\{p\} of \$\{total\}/.test(houseFooter), 'page X of Y footer via the house footer');
 ok(/getImageProperties/.test(pdf),             'logo sized properly');
 
 console.log(`\n${pass} passed, ${fail} failed`);

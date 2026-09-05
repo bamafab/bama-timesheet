@@ -27,6 +27,12 @@ const cocBlock = shared.slice(shared.indexOf('// CERTIFICATE OF CONFORMITY (F1b'
 const promptBlock = (cocBlock.match(/async function cocDraftScope[\s\S]*?^}/m) || [''])[0];
 const gatherBlock = (cocBlock.match(/async function cocGatherFacts[\s\S]*?\n  return facts;\n}/m) || [''])[0];
 
+// House-style helpers (PDF house-style, 2026-08): footer + logo sizing live in
+// bamaDocHeader()/bamaDocFooter(), so the renderer is checked for the call and
+// the helper for the behaviour.
+const houseHeader = (shared.match(/^function bamaDocHeader\([\s\S]*?^}/m) || [''])[0];
+const houseFooter = (shared.match(/^function bamaDocFooter\([\s\S]*?^}/m) || [''])[0];
+
 console.log('The AI is fenced in');
 ok(/the only information you may use/i.test(promptBlock), 'the prompt states the facts are the only permitted source');
 ok(/Do NOT state any number/i.test(promptBlock),          'forbidden from stating numbers not in the facts');
@@ -37,12 +43,12 @@ ok(/JSON\.stringify\(summary/.test(promptBlock),          'the facts are passed 
 ok(!/max_tokens:\s*[4-9]\d{3}/.test(promptBlock),         'token budget is modest — this is a short narrative, not a document');
 
 console.log('\nFacts come from the ERP, and gaps are surfaced');
-['job-assemblies', 'inspection-plans', 'inspection-records', 'BAMA MAT 001', 'welder-quals'].forEach(src =>
+['/api/projects', 'inspection-plans', 'inspection-records', 'heat-allocations', 'steel-test-certs', 'welder-quals'].forEach(src =>
   ok(gatherBlock.includes(src), `reads ${src}`));
 ok(/facts\.gaps\.push/.test(gatherBlock), 'missing records are recorded as gaps');
 const gapCount = (gatherBlock.match(/facts\.gaps\.push/g) || []).length;
 ok(gapCount >= 8, `every source has a gap path (${gapCount} found)`, String(gapCount));
-ok(/No heat \/ cast numbers found/.test(gatherBlock), 'missing heat numbers is an explicit gap');
+ok(/No heat \/ cast numbers on file/.test(gatherBlock), 'missing heat numbers is an explicit gap');
 ok(/failed inspection/i.test(gatherBlock),           'failed inspections are flagged before certifying');
 ok(/qualification not valid/i.test(gatherBlock),     'invalid welder qualifications are flagged');
 ok(/sample not yet satisfied/i.test(gatherBlock),    'an unmet inspection sample is flagged');
@@ -58,9 +64,9 @@ ok(/if \(d\.scopeText\)/.test(render),                         'scope section on
 ok(/filter\(p => p\[1\] !== null/.test(render),                'blank key-values are dropped, not printed as empty');
 ok(/Visual inspection is carried out on 100% of welds/.test(render),
    'the 100% visual statement is fixed text, not derived from data that could be wrong');
-ok(/getImageProperties/.test(render), 'logo sized via getImageProperties (data URIs have no naturalWidth)');
+ok(/bamaDocHeader\(/.test(render) && /getImageProperties/.test(houseHeader), 'logo sized via getImageProperties in the house header (data URIs have no naturalWidth)');
 ok(/splitTextToSize/.test(render),    'text wrapping used throughout');
-ok(/Page \$\{p\} of \$\{total\}/.test(render), 'page X of Y footer');
+ok(/bamaDocFooter\(/.test(render) && /Page \$\{p\} of \$\{total\}/.test(houseFooter), 'page X of Y footer via the house footer');
 
 console.log('\nIssued certificates are frozen');
 ok(/payload/.test(api),                        'the payload snapshot column is written');
@@ -95,7 +101,7 @@ ok(/no responsibility is accepted[\s\S]{0,120}erection/.test(render),
 ok(/fabricated, supplied and installed/.test(render), 'supply-and-install wording covers installation');
 ok(/erection records/.test(render), 'and cites erection records');
 ok(/Scope', supplyOnly \?/.test(render), 'the scope is stated on the face of the document, not just in the wording');
-ok(/supply only' : 'supply and installation'/.test(render), 'the header sub-line states the scope too');
+ok(/Scope:',\s*value: supplyOnly \? 'Supply only' : 'Supply and installation'/.test(render), 'the header meta line states the scope too');
 const uiMode = shared.slice(shared.indexOf('async function cocSetMode'));
 ok(/doc_type=\$\{_cocMode\}/.test(shared), 'each scope keeps its own revision sequence');
 ok(/_cocMode === 'doc' \? 'Issue Declaration/.test(shared), 'the confirm dialog names the right document');
