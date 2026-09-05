@@ -34,6 +34,15 @@ MANUAL = {
     'migrate-drawings-blob-to-sql.sql':     'One-off: move drawing blobs into SQL',
 }
 
+# Tables that were retired with the legacy tender world (2026-08-09). Any probe
+# for them is dropped: a script that ONLY created retired tables is listed with
+# kind='retired' (schema-check: "retired — not required"); a script that also
+# creates live tables keeps its live probes and notes the retired part. Never run
+# these to make the Health tab green — the table is not read by anything live.
+RETIRED_TABLES = {
+    'TenderComments': 'TenderComments retired 2026-08-09 with tenders.html/quotes.html — nothing live reads it; do not create',
+}
+
 def parse(txt):
     tables = sorted(set(re.findall(r'CREATE\s+TABLE\s+(?:dbo\.)?\[?(\w+)\]?', txt, re.I)))
     cols = set()
@@ -70,11 +79,21 @@ def main():
         }
         # Column adds on a table this script also creates are already covered.
         entry['columns'] = [c for c in entry['columns'] if c['table'] not in tables]
+        # Retired tables: drop their probes; a script left with nothing live is retired.
+        retired = [t for t in tables if t in RETIRED_TABLES]
+        if retired:
+            entry['tables'] = [t for t in tables if t not in RETIRED_TABLES]
+            entry['columns'] = [c for c in entry['columns'] if c['table'] not in RETIRED_TABLES]
+            entry['retired'] = retired
+            entry['retired_note'] = '; '.join(RETIRED_TABLES[t] for t in retired)
+            if not entry['tables'] and not entry['columns'] and not entry['seedForms'] and entry['kind'] != 'manual':
+                entry['kind'] = 'retired'
         entries.append(entry)
     os.makedirs(os.path.dirname(OUT), exist_ok=True)
     json.dump({'generated_from': SQL_DIR, 'migrations': entries}, open(OUT, 'w'), indent=2)
     struct = sum(1 for e in entries if e['kind'] == 'structural')
-    print(f'{OUT}: {len(entries)} scripts ({struct} probeable, {len(entries)-struct} data-only)')
+    retired = sum(1 for e in entries if e['kind'] == 'retired')
+    print(f'{OUT}: {len(entries)} scripts ({struct} probeable, {len(entries)-struct-retired} data-only, {retired} retired)')
 
 if __name__ == '__main__':
     main()

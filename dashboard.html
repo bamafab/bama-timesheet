@@ -4763,7 +4763,8 @@ function renderSchemaCheck() {
     missing:      { label: 'NEEDS RUNNING', color: '#ff6b6b', order: 0 },
     partial:      { label: 'PART-APPLIED',  color: '#eab308', order: 1 },
     unverifiable: { label: 'DATA ONLY',     color: '#8b9bb4', order: 2 },
-    applied:      { label: 'APPLIED',       color: '#3ecf8e', order: 3 }
+    applied:      { label: 'APPLIED',       color: '#3ecf8e', order: 3 },
+    retired:      { label: 'RETIRED',       color: '#6b7a90', order: 4 }
   };
   const c = _schemaCheck.counts || {};
   const card = (n, label, color) => `<div style="background:var(--card);border:1px solid var(--border);border-left:3px solid ${color};border-radius:8px;padding:8px 14px;min-width:104px">
@@ -4771,27 +4772,30 @@ function renderSchemaCheck() {
     <div style="font-size:10.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em">${label}</div></div>`;
 
   const rows = (_schemaCheck.migrations || [])
-    .filter(m => showAll || m.status !== 'applied')
-    .sort((a, b) => (STY[a.status].order - STY[b.status].order) || a.script.localeCompare(b.script));
+    .filter(m => showAll || (m.status !== 'applied' && m.status !== 'retired'))
+    .sort((a, b) => ((STY[a.status] || STY.unverifiable).order - (STY[b.status] || STY.unverifiable).order) || a.script.localeCompare(b.script));
 
   const attention = (c.missing || 0) + (c.partial || 0);
   host.innerHTML = `
     <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:12px">
       ${card(c.missing, 'Needs running', '#ff6b6b')}${card(c.partial, 'Part-applied', '#eab308')}
-      ${card(c.applied, 'Applied', '#3ecf8e')}${card(c.unverifiable, 'Data only', '#8b9bb4')}
+      ${card(c.applied, 'Applied', '#3ecf8e')}${card(c.unverifiable, 'Data only', '#8b9bb4')}${c.retired ? card(c.retired, 'Retired', '#6b7a90') : ''}
     </div>
     <p style="font-size:11.5px;color:var(--muted);margin:0 0 10px;line-height:1.6">
       ${attention ? `<strong style="color:#eab308">${attention} script${attention > 1 ? 's' : ''} need attention.</strong> ` : '<strong style="color:#3ecf8e">Everything detectable is applied.</strong> '}
       <strong>Data only</strong> = backfills, imports and constraint changes — nothing structural to look for, so those can't be
       confirmed automatically. Ask for the script by name and it'll be pasted in chat ready for the Query Editor.
+      ${c.retired ? '<strong>Retired</strong> = only created tables retired with the legacy tender world — not required, never run. ' : ''}
       ${_schemaCheck.table_count} tables live · checked ${String(_schemaCheck.checked_at).slice(0, 16).replace('T', ' ')}.</p>
     ${rows.length ? rows.map(m => {
-      const s = STY[m.status];
+      const s = STY[m.status] || STY.unverifiable;
+      const title = m.status === 'retired' ? `${m.title || ''} — retired, not required` : (m.title || '');
       return `<div style="display:flex;gap:10px;align-items:flex-start;padding:7px 0;border-top:1px solid var(--border)">
         <span style="background:${s.color}22;color:${s.color};border:1px solid ${s.color}55;border-radius:5px;padding:2px 8px;font-size:10px;font-weight:700;white-space:nowrap;min-width:104px;text-align:center">${s.label}</span>
         <div style="flex:1;min-width:0">
           <div style="font-family:var(--font-mono);font-size:11.5px;color:var(--text)">api/sql/${escHtml(m.script)}</div>
-          <div style="font-size:11px;color:var(--muted);line-height:1.5">${escHtml(m.title || '')}</div>
+          <div style="font-size:11px;color:var(--muted);line-height:1.5">${escHtml(title)}</div>
+          ${m.retired_note && m.status !== 'retired' ? `<div style="font-size:10.5px;color:#6b7a90;margin-top:2px">${escHtml(m.retired_note)}</div>` : ''}
           ${m.missing && m.missing.length && m.status !== 'unverifiable'
             ? `<div style="font-size:10.5px;color:#ff9b9b;margin-top:2px">not in the database: ${m.missing.slice(0, 8).map(escHtml).join(', ')}${m.missing.length > 8 ? ` +${m.missing.length - 8} more` : ''}</div>` : ''}
         </div></div>`;

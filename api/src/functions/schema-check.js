@@ -13,6 +13,8 @@
 //   missing     — none of it is present ⇒ needs running
 //   unverifiable— data-only script (backfill / import / constraint widening);
 //                 nothing structural to look for, so it's listed for the eye
+//   retired     — script only created tables retired with the legacy tender
+//                 world (manifest kind='retired'); not required, never run it
 //
 // Route: GET /api/schema-check
 // ─────────────────────────────────────────────────────────────────────────────
@@ -72,13 +74,15 @@ app.http('schema-check', {
                     checks.push({ kind: 'seed', label: code, present: forms.has(String(code).trim().toLowerCase()) }));
 
                 let status;
-                if (m.kind === 'manual' || !checks.length) status = 'unverifiable';
+                if (m.kind === 'retired') status = 'retired';
+                else if (m.kind === 'manual' || !checks.length) status = 'unverifiable';
                 else {
                     const have = checks.filter(c => c.present).length;
                     status = have === checks.length ? 'applied' : have === 0 ? 'missing' : 'partial';
                 }
                 return {
                     script: m.script, title: m.title, kind: m.kind, status,
+                    retired: m.retired || [], retired_note: m.retired_note || null,
                     checks,
                     missing: checks.filter(c => !c.present).map(c => c.label)
                 };

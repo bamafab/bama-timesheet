@@ -182,6 +182,10 @@ management, and a standalone UK steel section reference.
   commit as any new migration**, or the new script won't be checked. Data-only
   scripts (backfills, imports, constraint widenings) can't be probed
   structurally and are deliberately listed as unverifiable rather than assumed.
+  **Retired tables** (`RETIRED_TABLES` in `build-manifest.py`, currently
+  `TenderComments`) are dropped from every probe: a script that only created
+  retired tables reports *retired — not required*; one that also creates live
+  tables keeps its live probes. Never run a retired script to turn Health green.
 - **Paste SQL migrations inline in chat — never just reference the path.**
   When a change requires a `.sql` script under `api/sql/`, the user runs it
   manually against `bama-erp` (Azure portal Query Editor). They expect the

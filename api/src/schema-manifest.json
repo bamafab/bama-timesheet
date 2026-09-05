@@ -1289,12 +1289,14 @@
     {
       "script": "create-tender-comments.sql",
       "title": "Tender Comments",
-      "kind": "structural",
-      "tables": [
+      "kind": "retired",
+      "tables": [],
+      "columns": [],
+      "seedForms": [],
+      "retired": [
         "TenderComments"
       ],
-      "columns": [],
-      "seedForms": []
+      "retired_note": "TenderComments retired 2026-08-09 with tenders.html/quotes.html \u2014 nothing live reads it; do not create"
     },
     {
       "script": "create-tender-register.sql",
@@ -1302,11 +1304,14 @@
       "kind": "structural",
       "tables": [
         "TenderAssignees",
-        "TenderComments",
         "TenderRegister"
       ],
       "columns": [],
-      "seedForms": []
+      "seedForms": [],
+      "retired": [
+        "TenderComments"
+      ],
+      "retired_note": "TenderComments retired 2026-08-09 with tenders.html/quotes.html \u2014 nothing live reads it; do not create"
     },
     {
       "script": "create-toolbox-talks.sql",
