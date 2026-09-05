@@ -4241,7 +4241,7 @@ async function trResendNotify(tenderId) {
       at 10 per session and 20 per minute per user server-side, so a page stuck in a loop cannot flood the table.<br>
       <strong>Nothing here is deleted automatically</strong> — the table has no purge job (SQL Serverless cost rule); this view is simply
       date-bounded (max 90 days). Server-side (API) failures are NOT in this list — they go to Application Insights
-      (<em>Application Insights resource bama-erp-api → Failures</em>) and the <em>Http 5xx</em> alert emails Mateusz when there are more than 5 in 5 minutes.
+      (<em>Application Insights resource bama-erp-api → Failures</em>) and the server-error alert (App Insights log search, resultCode ≥ 500) emails Mateusz when there are more than 5 in 5 minutes.
       Every API response carries an <code>X-Request-Id</code>; a report's <code>lastApiRequestId</code> is the invocation to look up there.<br>
       <strong>Empty when it shouldn't be?</strong> (1) the ClientErrors migration hasn't been run — a red note appears above and
       Database migrations lists <code>create-client-errors.sql</code>; (2) the user had no Microsoft token in that tab (nothing is
@@ -5005,7 +5005,7 @@ function diagThrowClientError() {
   toast('Test error thrown — the row appears below in a few seconds', 'success');
   setTimeout(loadClientErrors, 4000);
 }
-// Six deliberate 500s trip the alert rule (Http 5xx > 5 in 5 min). No data touched.
+// Six deliberate 500s trip the alert rule (App Insights: resultCode ≥ 500, > 5 in 5 min). No data touched.
 async function diagForceServer500s() {
   if (!await bamaConfirm('Send 6 deliberate server errors to /api/diag-throw? This trips the Http 5xx alert email (matt@bamafabrication.co.uk). No data is touched.', 'Force server 500s')) return;
   let got500 = 0, other = 0;

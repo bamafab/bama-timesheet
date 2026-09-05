@@ -2412,12 +2412,18 @@ timer (the 2026-08-10 Serverless cost rule holds):
   Adaptive sampling is on in `host.json` with requests excluded from sampling.
   Traces = `context.log/warn/error`; every invocation's `operation_Id` equals
   the `X-Request-Id` we return (below). Expected cost: free tier / < £5 a month.
-- **One alert rule** — a *platform metric* alert on the Function App itself:
-  `Http 5xx` Count > 5 over 5 min → action group `bama-erp-alerts` → email
-  matt@bamafabrication.co.uk. Deliberately NOT an App Insights log query:
-  cheaper (~£0.08/month), and it counts real 5xx responses whether the handler
-  threw or returned `serverError()` (Functions telemetry marks a returned 500
-  as `success=true`, so a "failed requests" alert would miss most of ours).
+- **One alert rule** (created 2026-09-05) — a *log search* alert on the App
+  Insights resource: `requests | where toint(resultCode) >= 500`, table rows
+  > 5 per 5-min window, evaluated every 5 min, severity 1, auto-resolve, mute
+  30 min → action group `bama-erp-alerts` (display `bama-erp`) → email
+  matt@bamafabrication.co.uk. ~$1.50/month. Why not a platform metric: the
+  Function App is on **Flex Consumption**, which exposes no `Http 5xx` /
+  `Http Server Errors` metric ("not supported for selected scope"). Why
+  `resultCode` and not the "Failed requests" metric: Functions telemetry marks
+  a *returned* 500 as `success=true`, and most of ours are returned via
+  `serverError()`. Requests are excluded from sampling in `host.json`, so the
+  count is exact. Expect the email ~5–12 min after the failures (ingestion +
+  evaluation lag).
 - **`api/src/functions/observability.js`** — ONE `app.hook.postInvocation`
   hook, zero handler edits: stamps `X-Request-Id: <invocationId>` on every
   response (exposed via `Access-Control-Expose-Headers`); on any status ≥ 500
