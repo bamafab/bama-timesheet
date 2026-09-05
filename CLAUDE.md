@@ -806,7 +806,8 @@ mark-fabricated step). Migration: `api/sql/add-staged-fabrication.sql`.
   ```
 - **One `auth.js`, one `responses.js`** — at `api/src/`. The pre-refactor copies
   inside `api/src/functions/` were deleted 2026-09-05; don't recreate them
-  (anything in `functions/` is loaded by the v4 host at startup).
+  (anything in `functions/` is loaded by the v4 host at startup — which is
+  exactly why the postInvocation hook lives in `functions/observability.js`).
 - **Never `git add -A` report output.** Root `*.pdf` is gitignored (test PDFs
   with real figures were committed 31 Jul/4 Aug and removed 2026-09-05). Check
   `git status` before staging; deliverable PDFs belong under `docs/`.
@@ -2399,6 +2400,91 @@ none of this is built yet.
 Both workflows trigger on push to `main`:
 - **Frontend** → `Azure/static-web-apps-deploy@v1`, uploads `/` as-is.
 - **API** → zips `api/`, deploys to Function App `bama-erp-api` via OIDC.
+
+## Monitoring, alerting & client errors (Session 2, 2026-09-05)
+
+The system tells us when it breaks. Three layers, none of which touch SQL on a
+timer (the 2026-08-10 Serverless cost rule holds):
+
+- **Application Insights** on the Function App (`bama-erp-api-ai`, workspace
+  `bama-erp-logs`, UK South; app setting `APPLICATIONINSIGHTS_CONNECTION_STRING`).
+  Adaptive sampling is on in `host.json` with requests excluded from sampling.
+  Traces = `context.log/warn/error`; every invocation's `operation_Id` equals
+  the `X-Request-Id` we return (below). Expected cost: free tier / < £5 a month.
+- **One alert rule** — a *platform metric* alert on the Function App itself:
+  `Http 5xx` Count > 5 over 5 min → action group `bama-erp-alerts` → email
+  matt@bamafabrication.co.uk. Deliberately NOT an App Insights log query:
+  cheaper (~£0.08/month), and it counts real 5xx responses whether the handler
+  threw or returned `serverError()` (Functions telemetry marks a returned 500
+  as `success=true`, so a "failed requests" alert would miss most of ours).
+- **`api/src/functions/observability.js`** — ONE `app.hook.postInvocation`
+  hook, zero handler edits: stamps `X-Request-Id: <invocationId>` on every
+  response (exposed via `Access-Control-Expose-Headers`); on any status ≥ 500
+  logs `[5xx] METHOD /api/route status=NNN user=<email> reqId=<id>` (email
+  comes from a WeakMap `requireAuth` fills — `auth.getAuthUser(request)`; no
+  PII beyond email); converts an UNCAUGHT throw into a CORS'd JSON 500
+  `{error, request_id}` — the host's bare 500 has no CORS headers and the
+  browser reports it as "Failed to fetch". Handler convention stays: catch →
+  `context.error('route-name:', err)` → `return serverError(...)`. Never
+  `console.*` in `api/` — it bypasses the invocation context.
+  `GET /api/diag-throw?confirm=yes` (requireAuth, no SQL) throws on purpose:
+  six calls trip the alert. Gate: `tests/observability-hook.js`.
+- **Client errors** — the global `window 'error'` + `'unhandledrejection'`
+  reporter (canonical block in `shared.js` between the
+  `// === BAMA client-error reporter` markers; byte-identical standalone copies
+  in `quote-builder.html` and `dashboard.html`, which don't load shared.js —
+  `m-qms.html` DOES load shared.js, so no copy there). Fire-and-forget POST to
+  `/api/client-error` with `{page, message, stack, url (hash stripped),
+  userAgent, extra}`; de-duplicated per session, 10/session cap, skips
+  no-token / 401 / AbortError / opaque "Script error." / resource-load events;
+  the reporter itself can never throw. `apiCall` / `trFetch` / `qbFetch` set
+  `err.requestId` + `window.__bamaLastApiRequestId` from `X-Request-Id` (in
+  reports only — never in toasts). `bamaReportClientError(err, extra)` is the
+  manual hook for caught-but-noteworthy failures. Server: rate limit 20/min per
+  user IN CODE before any SQL; every field clipped; `ClientErrors` table
+  (`api/sql/create-client-errors.sql`, new table, no restart); reads are
+  date-bounded 1–90 days (default 7) — **no purge job, ever**; missing table =
+  soft 200 `{stored:false}` so the reporter can't trip the 5xx alert before the
+  migration runs. Viewer: **ED › Health › Client errors** (grouped, CSV, help
+  note; Diagnostics box behind `userAccess`). Gates: `tests/client-errors.js`,
+  `tests/client-error-copies.js` (edit the block in shared.js, then paste it
+  into both standalone pages — the gate fails on drift).
+
+## Backups & recovery
+
+Azure SQL `bama-erp` (Serverless) has point-in-time restore (PITR) on by
+default: full backup weekly, differential every 12–24 h, transaction-log backup
+every 5–10 min. Retention: **7 days (default — recorded 2026-09-05; check under
+SQL database → Data management → Backups → Retention policies before relying
+on it)**. Backups need nothing from us and nothing here touches SQL on a timer.
+
+- **RPO ≤ 10 minutes** (the transaction-log backup interval — the most data a
+  restore can lose). **RTO: measured in the drill below.**
+- **Drill procedure** (rehearse at least twice a year, from the office — the
+  server firewall blocks home IPs so Query Editor won't connect from home):
+  1. portal → SQL server `bama-erp-sql` → database `bama-erp` → top toolbar
+     **Restore** → Point-in-time → pick a time 15–30 min ago → database name
+     `bama-erp-restore-test` → **same compute tier (Serverless, same vCore
+     max, auto-pause ON)** → Review + create. Note the wall-clock time.
+  2. When the restore shows *Online*, open Query Editor on
+     `bama-erp-restore-test` and run the row-count query in
+     `docs/restore-drill.sql` (Projects / Invoices / ClockEntries counts +
+     MAX ids/dates) — then the same query on live `bama-erp`. The copy must
+     equal live minus whatever landed after the chosen restore point.
+  3. Note the time the copy went Online → that is the measured RTO.
+  4. **Delete `bama-erp-restore-test`** (Overview → Delete). It bills vCore
+     seconds while resumed — never leave a restore copy behind.
+  5. Record below.
+- **Drill log**
+  | Date | Restore point | Copy online after | RTO (measured) | Row counts | Run by |
+  |---|---|---|---|---|---|
+  | _pending — Mateusz to run (Session 2)_ | | | | | |
+- **Real recovery** = the same steps with the LIVE name: restore to
+  `bama-erp-restored`, verify, then either repoint `SQL_CONNECTION_STRING` on
+  the Function App to the restored database (fastest — Function App restart
+  applies it) or rename databases. Never restore *over* the live database
+  before the copy has been verified. `ClockEntries` is the one table that must
+  never be lost — check its count first.
 
 ## AFP v2 (Applications for Payment) — invoice-tracker.html
 - **Cumulative model** (mirrors client Excel): per line the user sets **cumulative %** (`this_app_pct_complete` stores CUMULATIVE %, not per-period). `this_app_value` = contract × (cum − prev)%. Summary: Value of Application (cumulative) − Less Previous Contractor Certificate (editable, auto = Σ certified net of prior AFPs) = GROSS Valuation this period − retention = Amount Due. This automatically re-claims payless shortfalls.
