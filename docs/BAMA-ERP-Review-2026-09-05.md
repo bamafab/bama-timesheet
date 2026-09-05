@@ -20,7 +20,7 @@ The system is real and in daily production — new projects C260903 / C260905 we
 | 13–28 Aug | AFP cert OCR (summary-only notices, QS breakdown, over-certification), retention semantics aligned, invoice VAT rate select, bill-from-quote, SDN add-lines, IFC/STEP takeoff Path B, PlanSwift import, full-width layout |
 | 1–2 Sep | AFP engine audit (one prev-% model, scoped matching, certified-in-full shortcut, reconciliation guard, frozen Paid column, Less-Previous from chain); Payments Due defaults; double-billing guard |
 
-**Outstanding on your side** (unchanged): RAMS R19–R21 severity sign-off · mill cert examples · balustrade spigot numbers · D0 legacy content migration (see §4.3 — half done) · three pending SQL scripts (`create-employee-documents`, `seed-qms-forms-phase2`, `create-steel-test-certs` → restart).
+**Outstanding on your side** (unchanged): RAMS R19–R21 severity sign-off · mill cert examples · balustrade spigot numbers · D0 legacy content migration (see §4.3 — half done).
 
 ---
 
@@ -155,7 +155,7 @@ FAB 001 submission → auto-create inspection record (`qms_submission_id` link e
 | 10 | **4.4 Requisition→PO→stock chain** | 3–4 | Stock populated first (your quiet day) |
 | 11 | Tier 2 as pressure dictates (F5 first) | — | — |
 
-**Parallel, your side, any time:** run the three pending SQL scripts (I'll paste them inline when you're ready); D0 legacy content migration; RAMS R19–R21 severities; mill cert examples; spigot numbers.
+**Parallel, your side, any time:** D0 legacy content migration; RAMS R19–R21 severities; mill cert examples; spigot numbers.
 
 ---
 
