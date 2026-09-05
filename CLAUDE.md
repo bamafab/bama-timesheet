@@ -2472,17 +2472,21 @@ every 5–10 min (differential every 12 h). Retention, set 2026-09-05 at SQL
 lives on the server blade, not the database):
 - **PITR 35 days** (was the 7-day default) — any bad write inside five weeks
   can be undone to the minute.
-- **LTR weekly kept 12 weeks, monthly (first backup of month) kept 24 months,
-  yearly off, immutability off** — covers the "discovered late" case (deleted
-  invoice found after a fortnight's holiday, payroll dispute six months on).
-  LTR copies are restored from the same Restore blade → *Long-term backup*.
+- **LTR (long-term retention) is NOT available** — Azure refuses it on a
+  Serverless database with auto-pause enabled
+  (`LtrConfigPolicyUnsupportedIfAutoPauseEnabled`, tried 2026-09-05). Auto-pause
+  stays (cost rule) → no LTR. Anything older than 35 days is unrecoverable from
+  Azure backups. Optional belt-and-braces: a **manual** export (database →
+  Export → .bacpac to a storage account) once a quarter, by hand — never a
+  timer.
 - Restore-test copies must be deleted afterwards (drill log).
 Backups need nothing from us and nothing here touches SQL on a timer.
 
 - **RPO ≤ 10 minutes** (the transaction-log backup interval — the most data a
   restore can lose). **RTO ≈ 30 minutes** (measured 27 min, 2026-09-05 — see
   drill log). Add ~5 min to repoint `SQL_CONNECTION_STRING` + restart the
-  Function App in a real recovery.
+  Function App in a real recovery. Alert auto-resolve also verified 2026-09-05
+  (resolved email ~18:38 after the 18:22 fired email).
 - **Drill procedure** (rehearse at least twice a year, from the office — the
   server firewall blocks home IPs so Query Editor won't connect from home):
   1. portal → SQL server `bama-erp-sql` → database `bama-erp` → top toolbar
