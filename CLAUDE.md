@@ -300,7 +300,6 @@ Labour Log, drawings PDFs/BOM JSON) and sending mail. All relational data lives 
         ├── db.js                 — mssql pool + parameterised query helper
         ├── responses.js          — CORS + JSON response helpers
         └── functions/            — One file per domain, each registers routes with app.http(…)
-            ├── auth.js           — (legacy copy of ../auth.js — not referenced; see Conventions)
             ├── clockings.js      — clock-in, clock-out, CRUD
             ├── clients.js        — Client database CRUD + search/autocomplete
             ├── drawings.js       — DrawingJobs + elements + notes
@@ -310,7 +309,6 @@ Labour Log, drawings PDFs/BOM JSON) and sending mail. All relational data lives 
             ├── payroll.js        — week approval + PayrollArchive
             ├── project-hours.js  — CRUD + grouped summary
             ├── projects.js       — Projects CRUD + Won-quote conversion lookup
-            ├── responses.js      — (legacy copy of ../responses.js — not referenced)
             ├── settings.js       — Settings KV + PIN verify + /api/health
             ├── tenders.js        — Tenders CRUD + reference generation + status changes
             ├── traceability.js   — welding machines, service types, suppliers
@@ -791,10 +789,12 @@ mark-fabricated step). Migration: `api/sql/add-staged-fabrication.sql`.
   const auth = await requireAuth(request);
   if (auth.status) return auth;  // 401 shape has a `.status`; user object doesn't
   ```
-- **Duplicate legacy files in `api/src/functions/`.** `auth.js` and `responses.js`
-  also exist at `api/src/` and are the canonical versions — the copies inside
-  `functions/` predate the refactor and aren't `require`d anywhere. Don't edit them;
-  prefer deleting if touching this area.
+- **One `auth.js`, one `responses.js`** — at `api/src/`. The pre-refactor copies
+  inside `api/src/functions/` were deleted 2026-09-05; don't recreate them
+  (anything in `functions/` is loaded by the v4 host at startup).
+- **Never `git add -A` report output.** Root `*.pdf` is gitignored (test PDFs
+  with real figures were committed 31 Jul/4 Aug and removed 2026-09-05). Check
+  `git status` before staging; deliverable PDFs belong under `docs/`.
 - **Keep-warm.** `keep-warm.js` runs a timer trigger every 4 min Mon–Sat 05:00–20:00
   to prevent cold starts during workshop hours. Do not rely on it for correctness —
   the frontend also pings `/api/health` on load.

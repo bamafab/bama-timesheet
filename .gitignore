@@ -1,10 +1,14 @@
 node_modules/
 package-lock.json
-package.json
+
+# Root-level test outputs (report PDFs carry real company figures) — never commit.
+# Deliberate PDFs live in docs/ or subfolders, which this pattern does not cover.
+/*.pdf
 
 # Takeoff fixtures: real customer geometry, local-only
 tests/fixtures/*
 !tests/fixtures/README.md
+# Scoped to tests/ only - api/package.json is deployed and MUST stay tracked
 tests/node_modules/
 tests/package*.json
 
