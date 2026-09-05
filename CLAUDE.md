@@ -2467,12 +2467,17 @@ timer (the 2026-08-10 Serverless cost rule holds):
 
 Azure SQL `bama-erp` (Serverless) has point-in-time restore (PITR) on by
 default: full backup weekly, differential every 12–24 h, transaction-log backup
-every 5–10 min. Retention: **7 days PITR** (confirmed 2026-09-05 at SQL
-*server* `bama-erp-sql` → Data management → Backups → Retention policies — it
-lives on the server blade, not the database; LTR weekly/monthly/yearly not
-set). That is the window inside which a bad write can be undone; anything
-older than a week is gone unless LTR is switched on. Backups need nothing from
-us and nothing here touches SQL on a timer.
+every 5–10 min (differential every 12 h). Retention, set 2026-09-05 at SQL
+*server* `bama-erp-sql` → Data management → Backups → Retention policies (it
+lives on the server blade, not the database):
+- **PITR 35 days** (was the 7-day default) — any bad write inside five weeks
+  can be undone to the minute.
+- **LTR weekly kept 12 weeks, monthly (first backup of month) kept 24 months,
+  yearly off, immutability off** — covers the "discovered late" case (deleted
+  invoice found after a fortnight's holiday, payroll dispute six months on).
+  LTR copies are restored from the same Restore blade → *Long-term backup*.
+- Restore-test copies must be deleted afterwards (drill log).
+Backups need nothing from us and nothing here touches SQL on a timer.
 
 - **RPO ≤ 10 minutes** (the transaction-log backup interval — the most data a
   restore can lose). **RTO ≈ 30 minutes** (measured 27 min, 2026-09-05 — see
