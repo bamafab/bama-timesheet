@@ -270,7 +270,16 @@ async function requireAuth(request) {
         const { unauthorized } = require('./responses');
         return unauthorized('Unauthorized — valid Microsoft token required', request);
     }
+    // Remembered per request (WeakMap — released with the request) so the
+    // observability hook can stamp route + user email on 5xx logs without
+    // every handler having to pass the user around. No PII beyond email.
+    if (request && typeof request === 'object') authUsers.set(request, user);
     return user;
+}
+
+const authUsers = new WeakMap();
+function getAuthUser(request) {
+    return (request && typeof request === 'object' && authUsers.get(request)) || null;
 }
 
 // Test seams (tests/auth-token.js). Not used by any route.
@@ -281,4 +290,4 @@ const _test = {
     TENANT_ID, CLIENT_ID
 };
 
-module.exports = { authenticate, requireAuth, validateToken, extractToken, _test };
+module.exports = { authenticate, requireAuth, getAuthUser, validateToken, extractToken, _test };

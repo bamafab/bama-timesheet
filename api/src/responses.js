@@ -11,6 +11,9 @@ function corsHeaders(request) {
         'Access-Control-Allow-Origin': allowedOrigin,
         'Access-Control-Allow-Methods': 'GET, POST, PUT, PATCH, DELETE, OPTIONS',
         'Access-Control-Allow-Headers': 'Authorization, Content-Type',
+        // X-Request-Id is stamped on every response by the observability
+        // hook (functions/observability.js); exposed so the browser can read it.
+        'Access-Control-Expose-Headers': 'X-Request-Id',
         'Access-Control-Allow-Credentials': 'true',
         'Access-Control-Max-Age': '86400'
     };

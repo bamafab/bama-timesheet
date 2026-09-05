@@ -143,7 +143,7 @@ async function spEnsureTenderFolder(token, reference, client, project) {
 }
 
 // Send email notification via Graph
-async function sendEmailNotification(token, { reference, client, project, assignedTo, deadline, createdBy, assigneeEmail, mateuszEmail }) {
+async function sendEmailNotification(token, { reference, client, project, assignedTo, deadline, createdBy, assigneeEmail, mateuszEmail }, context) {
     const recipients = [{ emailAddress: { address: mateuszEmail } }];
     if (assigneeEmail && assigneeEmail.toLowerCase() !== mateuszEmail.toLowerCase()) {
         recipients.push({ emailAddress: { address: assigneeEmail } });
@@ -177,7 +177,7 @@ async function sendEmailNotification(token, { reference, client, project, assign
             })
         });
     } catch (e) {
-        console.warn('Email notification failed:', e.message);
+        (context || console).warn('Email notification failed:', e.message);
         // Non-fatal — don't block tender creation
     }
 }
@@ -232,7 +232,7 @@ app.http('tender-register-list', {
 app.http('tender-register-create', {
     methods: ['POST'], authLevel: 'anonymous',
     route: 'tender-register',
-    handler: async (req) => {
+    handler: async (req, context) => {
         const auth = await requireAuth(req);
         if (auth.status) return auth;
 
@@ -296,7 +296,7 @@ app.http('tender-register-create', {
                         id:       tenderId
                     });
                 } catch (spErr) {
-                    console.warn('SharePoint folder creation failed:', spErr.message);
+                    context.warn('SharePoint folder creation failed:', spErr.message);
                 }
             }
 
@@ -316,7 +316,7 @@ app.http('tender-register-create', {
                         createdBy:     auth.name || auth.email || '',
                         assigneeEmail: assignees[0]?.email || '',
                         mateuszEmail:  'matt@bamafabrication.co.uk'
-                    });
+                    }, context);
                     emailSent = true;
                     // Mark notified in DB
                     await query(`
@@ -326,7 +326,7 @@ app.http('tender-register-create', {
                         WHERE id = @id
                     `, { by: auth.name || auth.email || '', id: tenderId });
                 } catch (mailErr) {
-                    console.warn('Email failed:', mailErr.message);
+                    context.warn('Email failed:', mailErr.message);
                 }
             }
 
@@ -486,7 +486,7 @@ app.http('tender-register-open-in-qb', {
 app.http('tender-register-resend-notify', {
     methods: ['PUT'], authLevel: 'anonymous',
     route: 'tender-register/{id}/resend-notify',
-    handler: async (req) => {
+    handler: async (req, context) => {
         const auth = await requireAuth(req);
         if (auth.status) return auth;
 
@@ -520,7 +520,7 @@ app.http('tender-register-resend-notify', {
                 createdBy:     auth.name || auth.email || '',
                 assigneeEmail: assignees[0]?.email || '',
                 mateuszEmail:  'matt@bamafabrication.co.uk'
-            });
+            }, context);
 
             await query(`
                 UPDATE TenderRegister SET
