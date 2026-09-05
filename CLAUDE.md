@@ -4,6 +4,10 @@ Workshop management system for BAMA Fabrication — a steel fabrication workshop
 Handles timesheet/kiosk clocking, payroll, holidays, office workflows, project/drawing
 management, and a standalone UK steel section reference.
 
+> **Current plan:** `docs/BAMA-ERP-Review-2026-09-05.md` — the 5 Sep read-only
+> audit and the sequenced session plan that followed it. Session 1 (JWT
+> signature verification, CI verify gate, housekeeping) landed 2026-09-05.
+
 ## Rules for Claude Code
 
 - **Golden tests gate the pricing engine (Fault Register F10).** Run
@@ -81,8 +85,9 @@ management, and a standalone UK steel section reference.
   server-side default (env `AI_MODEL_DEFAULT`, fallback pinned in the file) when
   `body.model` is absent — which is what the standalone pages (`quote-builder.html`,
   `dashboard.html`) do. Never write a literal model id anywhere else.
-- **Always run `node --check shared.js` after editing it.** It's ~9700 lines of
-  untested global-scope JS — a syntax error breaks every page at once.
+- **Always run `node --check shared.js` after editing it.** It's ~56,800 lines of
+  global-scope JS (source-regex gates in `tests/` cover parts of it; nothing
+  unit-tests it) — a syntax error breaks every page at once.
 - **Run `python3 preflight.py <file.html>` before every push that touches an
   HTML file.** Acorn only catches *syntax* — it sails past the bugs that have
   actually cost us hours: a `getElementById` for an id that doesn't exist (modal
@@ -294,7 +299,7 @@ Labour Log, drawings PDFs/BOM JSON) and sending mail. All relational data lives 
 ├── projects.html         — Drawings & jobs (per-project draftsman/build workflow)
 ├── project-tracker.html  — Project register: live SQL projects from won quotes
 ├── steel-database.html   — Standalone UK steel section reference (no shared.js, no auth)
-├── shared.js             — ~9700 LOC. Page-aware; every page except hub/steel loads it.
+├── shared.js             — ~56,800 LOC. Page-aware; every page except hub/steel/dashboard/quote-builder loads it.
 ├── bama.css              — Single shared stylesheet. Dark theme, CSS variables.
 ├── staticwebapp.config.json — Azure SWA route: `/` → `/hub.html`
 ├── .github/workflows/
@@ -352,11 +357,12 @@ Two layers:
 > handoff will stay forever — but also don't casually refactor it; see the rule
 > about hub.html above.
 >
-> ⚠️ **PINs are currently loaded to the client and compared in JS.** The full
-> `Employees` row (including `pin`) arrives via `/api/employees?all=true` and the
-> manager/office/draftsman PIN gates compare locally. `/api/auth/verify-pin`
-> exists but is not used. This must be tightened before real RBAC lands:
-> stop sending PINs to the client and route all PIN checks through the server.
+> ℹ️ **PINs never leave the API.** `api/src/functions/employees.js` strips `pin`
+> from every row it returns and substitutes `has_pin`; all PIN gates go through
+> `POST /api/auth/verify-pin` (`settings.js`, called from `shared.js`). Don't
+> reintroduce a client-side compare. (Corrected 2026-09-05 — the old note said
+> PINs were loaded to the client; that stopped being true when employees.js
+> started stripping them.)
 
 **1. Microsoft login (who are you?)** — OAuth2 implicit flow against Azure AD.
 - Tenant: `c92626f5-e391-499a-9059-0113bd07da2d`
