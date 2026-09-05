@@ -1633,7 +1633,6 @@ RULES:
 
   try {
     const data = await callClaude({
-      model: 'claude-sonnet-4-6',
       max_tokens: 800,
       messages: [{ role: 'user', content: prompt }]
     });
@@ -1982,7 +1981,6 @@ RULES:
 
   try {
     const data = await callClaude({
-      model: 'claude-sonnet-4-6',
       max_tokens: 4000,
       messages: [{ role: 'user', content: prompt }]
     });

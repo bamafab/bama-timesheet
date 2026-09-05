@@ -212,7 +212,7 @@
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js" data-jspdf-loaded="1"></script>
 <script>window.CURRENT_PAGE = 'm-qms';</script>
-<script src="shared.js?v=20260902h"></script>
+<script src="shared.js?v=20260905a"></script>
 <script src="steel-match.js?v=20260801e"></script>
 
 <script>
@@ -874,7 +874,7 @@ async function mSnagAiDraft() {
   btn.disabled = true; status.textContent = 'Drafting…';
   try {
     const resp = await callClaude({
-      model: 'claude-sonnet-4-6', max_tokens: 300,
+      model: AI_MODEL, max_tokens: 300,
       messages: [{ role: 'user', content:
 `You are writing a snag note for a UK structural steel site snagging report. Turn the inspector's shorthand into ONE or TWO concise, professional sentences describing the defect and what needs doing. Plain factual English, no preamble, no markdown. Shorthand: "${kw}"` }]
     });
@@ -1122,7 +1122,7 @@ async function stkParse() {
   const st = document.getElementById('stkParseStatus'); st.textContent = 'Recognising…';
   try {
     const resp = await callClaude({
-      model: 'claude-sonnet-4-6', max_tokens: 1500,
+      model: AI_MODEL, max_tokens: 1500,
       messages: [{ role: 'user', content:
 `Convert this spoken steel stocktake into rows. Text: "${text}"
 

@@ -5,7 +5,8 @@
 // directly (no CORS headers, and the API key must not be exposed client-side).
 //
 // POST /api/claude-proxy
-// Body: standard Anthropic messages request body (model, max_tokens, system, messages)
+// Body: standard Anthropic messages request body (model, max_tokens, system, messages);
+//       `model` optional — defaults to AI_MODEL_DEFAULT env / claude-sonnet-4-6
 // Returns: Anthropic response JSON as-is
 
 const { app } = require('@azure/functions');
@@ -34,8 +35,12 @@ app.http('claude-proxy', {
             return badRequest('Invalid JSON body', request);
         }
 
+        // Server-side model default (2026-09-05): pages that load shared.js send
+        // AI_MODEL; standalone pages (quote-builder, dashboard) send none and take
+        // env AI_MODEL_DEFAULT, falling back to the pinned model below.
+        if (!body.model) body.model = process.env.AI_MODEL_DEFAULT || 'claude-sonnet-4-6';
         // Safety guard — only allow claude-* models to prevent misuse
-        if (!body.model || !String(body.model).startsWith('claude-')) {
+        if (!String(body.model).startsWith('claude-')) {
             return badRequest('Invalid model', request);
         }
 

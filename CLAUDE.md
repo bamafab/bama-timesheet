@@ -76,6 +76,11 @@ management, and a standalone UK steel section reference.
   copy of its formatter; the test compares them against the canonical helpers
   and fails if they drift, and also fails if either page starts loading
   shared.js (at which point delete the duplicate).
+- **One AI model constant.** `AI_MODEL` at the top of `shared.js` is the only
+  client-side model string; `api/src/functions/claude-proxy.js` applies a
+  server-side default (env `AI_MODEL_DEFAULT`, fallback pinned in the file) when
+  `body.model` is absent — which is what the standalone pages (`quote-builder.html`,
+  `dashboard.html`) do. Never write a literal model id anywhere else.
 - **Always run `node --check shared.js` after editing it.** It's ~9700 lines of
   untested global-scope JS — a syntax error breaks every page at once.
 - **Run `python3 preflight.py <file.html>` before every push that touches an
@@ -1055,7 +1060,7 @@ Two-engine split, same principle as QB Quote Helper:
   Grade default, and the **Fasteners table** — pulled straight from the job
   BOM loose items (`_bomItemsByJob[jobId]` where `item_type` is `fixing` or
   `consumable`). AI never counts fixings; the BOM is authoritative.
-- **AI (`/api/claude-proxy`, `claude-sonnet-4-6`):** ONLY the Scope of Work.
+- **AI (`/api/claude-proxy`, `AI_MODEL`):** ONLY the Scope of Work.
   `sitePackGenerateScope()` fetches the ticked drawing(s) from the job's Site
   Installation files (Graph `/drives/{driveId}/items/{fileId}/content` →
   base64), attaches them as image/document blocks (same shape as QB staircase
@@ -1096,7 +1101,7 @@ Two-engine split, same principle as QB and the Site Pack:
   hazard library (hazard, pre/post-control L×S×R, standard control wording)
   seeded from BAMA's three example RAMS. The AI never invents scores or
   control text.
-- **AI (`/api/claude-proxy`, `claude-sonnet-4-6`):** ONLY drafts the Scope of
+- **AI (`/api/claude-proxy`, `AI_MODEL`):** ONLY drafts the Scope of
   Works + Sequence of Works from the ticked drawing(s) (reader, not
   calculator; 429-retry + deterministic template fallback).
 
@@ -2395,7 +2400,7 @@ Both workflows trigger on push to `main`:
 - **PDF**: `drawRamsPDF`-style native jsPDF renderer `drawBamaAfpPDF` — **landscape A4**, page 1 summary block, then grouped section pages (item header rows with light fill + quote/WO refs, red outstanding values, section totals, header repeat on page-break, Page X of Y footer).
 - **Cert / payment-notice OCR v2**: max_tokens 8000 (1500 truncated multi-page notices → JSON crash), `_extractJsonLoose` salvages truncated AI JSON (fence-strip + bracket-balance, sets `_truncated`). Per line the OCR extracts **certified CUMULATIVE value** (RG Carter "Certification Current Value") — handles both period and full-value certs; server derives this-period = cum − carried paid base and sets `gross_amount_paid = cum` (re-confirm safe). Manual fallback always available: "✓ Certify in full" copies applied figures into the cert fields per line. Payless lines highlighted red in the modal; Certified/Invoiced AFP cards show a red "▼ PAYLESS £X" badge when certified net < applied net.
 - **Natasza one-click**: Certified AFP cards show "✓ READY TO INVOICE" + Generate Invoice button directly on the card (`generateInvoiceFromAfpCard`).
-- **AFP import (mid-project onboarding)**: the import RECREATES the imported document itself — reads valuation no + "works up to" date, forces that AFP ref/number via `application_no` on POST /api/applications (dup-guarded; nextAfpRef MAX+1 continues the sequence, so the next raise is automatically N+1), keeps the document's own Less Previous Certificate. "📥 Import latest AFP" in the New AFP modal reads a submitted AFP (.xlsx strict SheetJS parser `parseAfpWorkbook` — validated to-the-penny vs S1969 AFP6; AI fallback `parseAfpWithAI` for PDFs/drifted layouts, model claude-sonnet-4-6 max_tokens 8000) and fills SOV + contract no + retention; prev certificate prefilled = imported cumulative (user checks vs latest payment notice). Requires xlsx.full.min.js script tag on the page.
+- **AFP import (mid-project onboarding)**: the import RECREATES the imported document itself — reads valuation no + "works up to" date, forces that AFP ref/number via `application_no` on POST /api/applications (dup-guarded; nextAfpRef MAX+1 continues the sequence, so the next raise is automatically N+1), keeps the document's own Less Previous Certificate. "📥 Import latest AFP" in the New AFP modal reads a submitted AFP (.xlsx strict SheetJS parser `parseAfpWorkbook` — validated to-the-penny vs S1969 AFP6; AI fallback `parseAfpWithAI` for PDFs/drifted layouts, `AI_MODEL` max_tokens 8000) and fills SOV + contract no + retention; prev certificate prefilled = imported cumulative (user checks vs latest payment notice). Requires xlsx.full.min.js script tag on the page.
 - Quotes with no line items fall back to a single "Contract works (as quoted)" line at quote_value. Zero-value lines stay in the modal but are excluded from the PDF.
 - Migration: `api/sql/add-afp-v2.sql` (ADD COLUMN → Function App restart required).
 - **Retention is NEVER deducted on AFP-generated invoices (2026-08-17, Mateusz's rule)**: retention is held at PROJECT level (`Applications.certified_retention` → CVR "Retention held"), and the payment-notice "Total amount due" is already net of retention. `applications-generate-invoice` sets invoice net = certified payment due excl. VAT (`certified_gross − certified_vat`, fallback `certified_value_net − certified_retention`, then applied equivalents), `retention_amount = 0`, VAT/reverse-charge on the full due amount. Bug history: INV0316 (S1965/C132 Val 6) subtracted cumulative retention £8,616.66 from the £8,803.34 due → £186.68. `certified_retention` is stored CUMULATIVE (2026-08-17, Mateusz: client payment certs always show retention cumulatively) — OCR extracts the notice's cumulative retention row as-is; CVR "Retention held" takes the LATEST certified AFP's figure per project (TOP 1 by application_no), never SUM; generate-invoice's net−retention fallback demoted below the gross-based paths (only correct on a first valuation).

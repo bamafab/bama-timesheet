@@ -2,6 +2,12 @@
 // CONFIGURATION
 // ═══════════════════════════════════════════
 const API_BASE = 'https://bama-erp-api-deauckd2cja7ebd5.uksouth-01.azurewebsites.net';
+// The ONE client-side model constant (2026-09-05). Every AI call that loads
+// shared.js sends `model: AI_MODEL`; pages that don't load shared.js
+// (quote-builder.html, dashboard.html) send no `model` and take the proxy's
+// server-side default (env AI_MODEL_DEFAULT, fallback claude-sonnet-4-6).
+// Change the model here + in api/src/functions/claude-proxy.js, nowhere else.
+const AI_MODEL = 'claude-sonnet-4-6';
 
 // Shared helper — routes all AI calls through the server-side proxy
 // (/api/claude-proxy), which holds the Anthropic key in Function App settings.
@@ -8565,7 +8571,7 @@ async function _supDzProcessNext() {
     const dataUri = await _fileToDataUri(file);
     const isImg   = file.type.startsWith('image/');
     const result  = await callClaude({
-      model: 'claude-sonnet-4-6',
+      model: AI_MODEL,
       max_tokens: 800,
       messages: [{
         role: 'user',
@@ -13272,7 +13278,7 @@ Return ONLY JSON, no markdown, no commentary:
 Omit unit_weight_kg where there is no per-piece weight column. Return an empty items array if nothing is recognisable.`;
 
   const result = await callClaude({
-    model: 'claude-sonnet-4-6',
+    model: AI_MODEL,
     max_tokens: 6000,
     messages: [{
       role: 'user',
@@ -17242,7 +17248,7 @@ RULES:
 
   try {
     const requestBody = {
-      model: 'claude-sonnet-4-6', max_tokens: 4000, system: systemPrompt,
+      model: AI_MODEL, max_tokens: 4000, system: systemPrompt,
       messages: [{ role: 'user', content: [ ...blocks, { type: 'text', text: userPrompt } ] }]
     };
     const doFetch = () => fetch(API_BASE + '/api/claude-proxy', {
@@ -17405,7 +17411,7 @@ RULES:
 BAMA RISK LIBRARY:
 ${libDigest}`;
     const requestBody = {
-      model: 'claude-sonnet-4-6', max_tokens: 6000, system: systemPrompt,
+      model: AI_MODEL, max_tokens: 6000, system: systemPrompt,
       messages: [{ role: 'user', content: [
         { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: b64 }, title: file.name },
         { type: 'text', text: userPrompt }
@@ -19256,7 +19262,7 @@ async function sitePackGenerateScope() {
 
   try {
     const requestBody = {
-      model: 'claude-sonnet-4-6', max_tokens: 1200, system: systemPrompt,
+      model: AI_MODEL, max_tokens: 1200, system: systemPrompt,
       messages: [{ role: 'user', content: [ ...blocks, { type: 'text', text: userPrompt } ] }]
     };
     const doFetch = () => fetch(API_BASE + '/api/claude-proxy', {
@@ -19618,7 +19624,7 @@ Return ONLY JSON, no markdown, no commentary:
 If a value is unknown, omit the key (don't use null in extras). Return an empty items array if no line items are recognisable.`;
 
   const result = await callClaude({
-    model: 'claude-sonnet-4-6',
+    model: AI_MODEL,
     max_tokens: 4000,
     messages: [{
       role: 'user',
@@ -21221,7 +21227,7 @@ Return ONLY JSON, no markdown, no commentary:
 { "rev": "P02", "confident": true }
 If you cannot clearly find a revision marking, return { "rev": null, "confident": false }.`;
     const result = await callClaude({
-      model: 'claude-sonnet-4-6',
+      model: AI_MODEL,
       max_tokens: 300,
       messages: [{ role: 'user', content: [block, { type: 'text', text: prompt }] }]
     });
@@ -21910,7 +21916,7 @@ or {"skip": true, "reason": "..."}
 Set any field you cannot determine to null. Use null (not 0) for missing numerics. Copy dimensions as printed — do NOT calculate or invent any number.`;
 
   const result = await callClaude({
-    model: 'claude-sonnet-4-6',
+    model: AI_MODEL,
     max_tokens: 3000,
     messages: [{
       role: 'user',
@@ -29650,7 +29656,7 @@ RULES:
 
   try {
     const requestBody = {
-      model: 'claude-sonnet-4-6',
+      model: AI_MODEL,
       max_tokens: 800,
       messages: [{ role: 'user', content: prompt }]
     };
@@ -30042,7 +30048,7 @@ Rules:
   }
 
   const result = await callClaude({
-    model: 'claude-sonnet-4-6',
+    model: AI_MODEL,
     max_tokens: 4000,
     messages: [{ role: 'user', content }]
   });
@@ -34927,7 +34933,7 @@ Rules:
 
   try {
     const data  = await callClaude({
-      model: 'claude-sonnet-4-6',
+      model: AI_MODEL,
       max_tokens: 2000,
       system: systemPrompt,
       messages: [{ role: 'user', content: userContent }]
@@ -36157,7 +36163,7 @@ Rules:
 - Return only the JSON object, no explanation, no markdown` + fewShotSection;
 
     const data = await callClaude({
-      model: 'claude-sonnet-4-6',
+      model: AI_MODEL,
       max_tokens: 1000,
       system: systemPrompt,
       messages: [{ role: 'user', content: text }]
@@ -37580,7 +37586,7 @@ async function _stmtHandleFile(file) {
     const dataUri = await _fileToDataUri(file);
     const isImg = file.type.startsWith('image/');
     const result = await callClaude({
-      model: 'claude-sonnet-4-6',
+      model: AI_MODEL,
       max_tokens: 3000,
       messages: [{
         role: 'user',
@@ -37958,7 +37964,7 @@ async function _bimpParseOne(i) {
     const dataUri = await _fileToDataUri(it.file);
     const isImg = it.file.type.startsWith('image/');
     const result = await callClaude({
-      model: 'claude-sonnet-4-6',
+      model: AI_MODEL,
       max_tokens: 2000,
       messages: [{
         role: 'user',
@@ -39186,7 +39192,7 @@ async function _supAddHandleFile(file) {
     const dataUri = await _fileToDataUri(file);
     const isImg = file.type.startsWith('image/');
     const result = await callClaude({
-      model: 'claude-sonnet-4-6',
+      model: AI_MODEL,
       max_tokens: 1500,
       messages: [{
         role: 'user',
@@ -40996,7 +41002,7 @@ Rules:
   }
 
   const result = await callClaude({
-    model: 'claude-sonnet-4-6',
+    model: AI_MODEL,
     max_tokens: 8000,
     messages: [{ role: 'user', content }]
   });
@@ -41860,7 +41866,7 @@ async function _runCertParse() {
       })
       .join('\n');
     const result = await callClaude({
-      model: 'claude-sonnet-4-6',
+      model: AI_MODEL,
       max_tokens: 8000,
       messages: [{
         role: 'user',
@@ -43846,7 +43852,7 @@ async function _invImportParsePdf(file) {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${await getToken()}` },
       body: JSON.stringify({
-        model: 'claude-sonnet-4-6',
+        model: AI_MODEL,
         max_tokens: 1500,
         messages: [{
           role: 'user',
@@ -43971,7 +43977,7 @@ Rules:
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${_tok}` },
     body: JSON.stringify({
-      model: 'claude-sonnet-4-6',
+      model: AI_MODEL,
       max_tokens: 1000,
       messages: [{ role: 'user', content: [ mediaBlock, { type: 'text', text: prompt } ] }]
     })
@@ -44122,7 +44128,7 @@ Rules:
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${_tok}` },
     body: JSON.stringify({
-      model: 'claude-sonnet-4-6',
+      model: AI_MODEL,
       max_tokens: 2000,
       messages: [{ role: 'user', content: [ mediaBlock, { type: 'text', text: prompt } ] }]
     })
@@ -44766,7 +44772,7 @@ async function onSupInvFilePicked(file) {
     const dataUri = await _fileToDataUri(file);
     const isImg = file.type.startsWith('image/');
     const result = await callClaude({
-      model: 'claude-sonnet-4-6',
+      model: AI_MODEL,
       max_tokens: 800,
       messages: [{
         role: 'user',
@@ -46006,7 +46012,7 @@ async function _parseRecDocument(file) {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${await getToken()}` },
     body: JSON.stringify({
-      model: 'claude-sonnet-4-6',
+      model: AI_MODEL,
       max_tokens: 2000,
       messages: [{
         role: 'user',
@@ -46890,7 +46896,7 @@ async function _parseRecStatementClaude(file) {
       'Authorization': `Bearer ${await getToken()}`
     },
     body: JSON.stringify({
-      model: 'claude-sonnet-4-6',
+      model: AI_MODEL,
       max_tokens: 4000,
       messages: [{
         role: 'user',
@@ -47002,7 +47008,7 @@ async function _gInvProcessNext() {
     const dataUri = await _fileToDataUri(_gInvFile);
     const isImg   = _gInvFile.type.startsWith('image/');
     const result  = await callClaude({
-      model: 'claude-sonnet-4-6',
+      model: AI_MODEL,
       max_tokens: 800,
       messages: [{ role: 'user', content: [
         isImg
@@ -47454,7 +47460,7 @@ async function _docProcessQueue() {
     } else {
       const dataUri = await _fileToDataUri(f);
       const result = await callClaude({
-        model: 'claude-sonnet-4-6',
+        model: AI_MODEL,
         max_tokens: 500,
         messages: [{ role: 'user', content: [
           isImg ? { type: 'image',    source: { type: 'base64', media_type: f.type, data: dataUri.split(',')[1] } }
@@ -47917,7 +47923,7 @@ ${raw.slice(0, 60000)}` }];
 CRITICAL RULES: this is a compliance document — transcribe the wording VERBATIM. Do not rewrite, summarise or correct anything. Do not invent headings; if a chunk has no heading use "". Drop only page numbers, headers/footers and old signature/date lines at the very end (they are being replaced by an electronic authorisation block).` }];
     } else { toast('Drop a .docx or .pdf policy', 'error'); return; }
 
-    const result = await callClaude({ model: 'claude-sonnet-4-6', max_tokens: 16000, messages: [{ role: 'user', content: payload }] });
+    const result = await callClaude({ model: AI_MODEL, max_tokens: 16000, messages: [{ role: 'user', content: payload }] });
     const text = (result.content?.find(b => b.type === 'text')?.text || '').trim();
     const s = text.indexOf('{'), e = text.lastIndexOf('}');
     const parsed = JSON.parse(text.slice(s, e + 1));
@@ -48885,7 +48891,7 @@ async function _supDocProcessQueue() {
     } else {
       const dataUri = await _fileToDataUri(f);
       const result = await callClaude({
-        model: 'claude-sonnet-4-6', max_tokens: 500,
+        model: AI_MODEL, max_tokens: 500,
         messages: [{ role: 'user', content: [
           isImg ? { type: 'image',    source: { type: 'base64', media_type: f.type, data: dataUri.split(',')[1] } }
                 : { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: dataUri.split(',')[1] } },
@@ -49105,7 +49111,7 @@ async function _empDocProcessQueue() {
     } else {
       const dataUri = await _fileToDataUri(f);
       const result = await callClaude({
-        model: 'claude-sonnet-4-6', max_tokens: 400,
+        model: AI_MODEL, max_tokens: 400,
         messages: [{ role: 'user', content: [
           isImg ? { type: 'image',    source: { type: 'base64', media_type: f.type, data: dataUri.split(',')[1] } }
                 : { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: dataUri.split(',')[1] } },
@@ -51175,7 +51181,7 @@ async function _plantDocProcessQueue() {
     } else {
       const dataUri = await _fileToDataUri(f);
       const result = await callClaude({
-        model: 'claude-sonnet-4-6', max_tokens: 500,
+        model: AI_MODEL, max_tokens: 500,
         messages: [{ role: 'user', content: [
           isImg ? { type: 'image',    source: { type: 'base64', media_type: f.type, data: dataUri.split(',')[1] } }
                 : { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: dataUri.split(',')[1] } },
@@ -51365,7 +51371,7 @@ async function _plantBulkProcess() {
     } else {
       const dataUri = await _fileToDataUri(f);
       const result = await callClaude({
-        model: 'claude-sonnet-4-6', max_tokens: 600,
+        model: AI_MODEL, max_tokens: 600,
         messages: [{ role: 'user', content: [
           isImg ? { type: 'image',    source: { type: 'base64', media_type: f.type, data: dataUri.split(',')[1] } }
                 : { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: dataUri.split(',')[1] } },
@@ -52068,7 +52074,7 @@ async function _weldCertProcess() {
     } else {
       const dataUri = await _fileToDataUri(f);
       const result = await callClaude({
-        model: 'claude-sonnet-4-6', max_tokens: 900,
+        model: AI_MODEL, max_tokens: 900,
         messages: [{ role: 'user', content: [
           isImg ? { type: 'image',    source: { type: 'base64', media_type: f.type, data: dataUri.split(',')[1] } }
                 : { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: dataUri.split(',')[1] } },
@@ -52490,7 +52496,7 @@ async function inspStcFiles(fileList) {
       const b64 = dataUri.split(',')[1];
       const isImg = /^image\//.test(file.type);
       const res = await callClaude({
-        model: 'claude-sonnet-4-6', max_tokens: 3000,
+        model: AI_MODEL, max_tokens: 3000,
         messages: [{ role: 'user', content: [
           isImg
             ? { type: 'image',    source: { type: 'base64', media_type: file.type, data: b64 } }
@@ -53685,7 +53691,7 @@ async function cocDraftScope(facts) {
     weld_categories: (facts.ndt || []).map(n => n.category)
   };
   const result = await callClaude({
-    model: 'claude-sonnet-4-6', max_tokens: 700,
+    model: AI_MODEL, max_tokens: 700,
     messages: [{ role: 'user', content: [{ type: 'text', text:
 `Write the scope-of-supply paragraphs for a structural steelwork Certificate of Conformity, for BAMA Fabrication Ltd (a UK structural steel fabricator).
 
@@ -54192,7 +54198,7 @@ async function dopReadCertificate() {
   const isPdf = /\.pdf$/i.test(doc.file_name || '') || /pdf/i.test(doc.title || '');
 
   const result = await callClaude({
-    model: 'claude-sonnet-4-6', max_tokens: 700,
+    model: AI_MODEL, max_tokens: 700,
     messages: [{ role: 'user', content: [
       isPdf ? { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: b64 } }
             : { type: 'image',    source: { type: 'base64', media_type: 'image/png', data: b64 } },
@@ -55634,7 +55640,7 @@ async function tbtSeedLibrary() {
 // calculation, not a regulated declaration, and reviewed before it is given.
 async function tbtDraftTalk(topic, category) {
   const result = await callClaude({
-    model: 'claude-sonnet-4-6', max_tokens: 900,
+    model: AI_MODEL, max_tokens: 900,
     messages: [{ role: 'user', content: [{ type: 'text', text:
 `Write a toolbox talk for BAMA Fabrication Ltd, a UK structural steel fabricator and erector, on this topic:
 

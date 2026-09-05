@@ -11514,7 +11514,6 @@ Respond ONLY in valid JSON with these exact keys — no markdown, no preamble:
   try {
     const f = _scRecogniseFile;
     const requestBody = {
-      model: 'claude-sonnet-4-6',
       max_tokens: 1500,
       system: systemPrompt,
       messages: [{
@@ -15785,8 +15784,7 @@ Rules:
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${sessionStorage.getItem('bama_token')}` },
       body: JSON.stringify({
-        model: 'claude-sonnet-4-6',
-        max_tokens: 4000,
+          max_tokens: 4000,
         system: systemPrompt,
         messages: [{
           role: 'user',
@@ -18228,7 +18226,6 @@ RULES:
 
   try {
     const requestBody = {
-      model: 'claude-sonnet-4-6',
       max_tokens: 800,
       messages: [{ role: 'user', content: prompt }]
     };
@@ -19032,7 +19029,6 @@ Please read this tender document and give me a full pricing briefing for my trad
 
   try {
     const requestBody = {
-      model: 'claude-sonnet-4-6',
       max_tokens: 8000,
       system: systemPrompt,
       messages: [{
@@ -22397,7 +22393,7 @@ quote_value is the headline total EXCLUDING VAT. Map each priced line on the doc
     const resp = await fetch(QB_API + '/api/claude-proxy', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${sessionStorage.getItem('bama_token')}` },
-      body: JSON.stringify({ model: 'claude-sonnet-4-6', max_tokens: 1500, system: systemPrompt, messages: [{ role: 'user', content }] })
+      body: JSON.stringify({ max_tokens: 1500, system: systemPrompt, messages: [{ role: 'user', content }] })
     });
     if (!resp.ok) throw new Error('API error ' + resp.status);
     const data = await resp.json();
@@ -22524,7 +22520,7 @@ quote_value = headline total ex VAT. Map priced lines to keys; 0 if absent.`;
       const resp = await fetch(QB_API + '/api/claude-proxy', {
         method:'POST',
         headers:{ 'Content-Type':'application/json', 'Authorization':`Bearer ${sessionStorage.getItem('bama_token')}` },
-        body: JSON.stringify({ model:'claude-sonnet-4-6', max_tokens:1500, system:systemPrompt,
+        body: JSON.stringify({ max_tokens:1500, system:systemPrompt,
           messages:[{ role:'user', content:[ block, { type:'text', text:'Extract the quote details.' } ] }] })
       });
       if (!resp.ok) throw new Error('API error ' + resp.status);
