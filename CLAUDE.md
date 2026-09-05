@@ -365,8 +365,26 @@ Two layers:
 
 **Backend verification** (`api/src/auth.js`) — `requireAuth(request)` is called at
 the top of every handler:
-- Decodes JWT header + payload (no signature check cryptographically, but verifies
-  `kid` exists in Microsoft's JWKS, plus `exp`, `nbf`, audience, issuer)
+- Checks `exp`, `nbf`, audience, issuer, then **verifies the RS256 signature**
+  (since 2026-09-05; before that only `kid` presence was checked — forged tokens
+  passed). Two-stage, "B+C":
+  - **B — local RS256** against Microsoft's JWKS (`node:crypto`, no dependency).
+    Graph access tokens carry a header `nonce` and Microsoft signs the header
+    with `nonce` replaced by `base64url(SHA-256(nonce))` — `verifyRs256()` tries
+    the raw header, then the nonce-normalised one. Unknown `kid` → JWKS is
+    re-fetched once (key rotation) before rejecting. `alg` must be `RS256`.
+  - **C — Graph introspection fallback**, ONLY for a nonce-carrying token that
+    fails B (i.e. Microsoft changed the nonce scheme): `GET /v1.0/me` with the
+    token, require `/me.id === payload.oid`; cached by SHA-256(token) until `exp`
+    (negatives 5 min). Never accepts without B or C succeeding.
+  - Gate: `node tests/auth-token.js` (25 cases, injected JWKS + stubbed
+    introspector, no network). Run before any push touching `api/src/auth.js`.
+  - **Permanent fix (queued, MSAL session):** expose an API-audience scope
+    (`api://<client-id>/access_as_user`) on the app registration, have the
+    frontend request a Graph token *and* an API token, and send the API token to
+    our API. Its `aud` is our client id and it has no nonce, so plain RS256
+    applies — at that point delete the nonce normalisation, the introspection
+    path and the Graph audiences from `validAudiences`.
 - Accepts audiences: our client ID, Graph (`https://graph.microsoft.com`), and Graph's
   app ID (`00000003-0000-0000-c000-000000000000`). That's why Graph-scoped tokens are OK.
 - Accepts v1 and v2 issuers for our tenant.
